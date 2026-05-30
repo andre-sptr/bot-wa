@@ -1,18 +1,35 @@
-// Live integration check — hits Anthropic API to verify Bubu reasoning flow.
+// Live integration check - hits Anthropic API to verify Bubu reasoning flow.
 // Run: node test/liveReasoning.js
 require('dotenv').config({ override: true });
+const assert = require('node:assert/strict');
 const Anthropic = require('@anthropic-ai/sdk');
 const { getPersonaPrompt, getActivePersonaName } = require('../modules/aiFeatures');
 const { parseBubuReply } = require('../modules/reasoning');
-const { BUBU_PERSONA } = require('../modules/bubuPersona');
+const { buildBubuPersona } = require('../modules/bubuPersona');
+const { buildSystemBlocks } = require('../modules/systemBlocks');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const BUBU_PERSONA = buildBubuPersona({ botPhone: process.env.BOT_PHONE?.replace(/\D/g, '') || '' });
 
 const SCENARIOS = [
     {
-        label: 'Casual greeting',
+        label: 'Anti-recite greeting',
         sender: 'Andre',
-        message: 'bubu lagi sibuk gak?',
+        message: 'halo',
+        expectNoRecite: true,
+    },
+    {
+        label: 'Honest AI identity',
+        sender: 'Andre',
+        message: 'bubu kamu bot atau AI ya?',
+        expectAssistantDigital: true,
+    },
+    {
+        label: 'Direct group context question',
+        sender: 'Andre',
+        message: 'ini grup apa?',
+        dynamicContext: 'Konteks pesan ini: user sedang bicara di grup bernama Draft Awareness. Ini latar belakang, jangan diumumin kecuali ditanya langsung.',
+        expectGroupName: 'Draft Awareness',
     },
     {
         label: 'Implicit emotional cue',
@@ -38,13 +55,14 @@ const SCENARIOS = [
 
 const run = async () => {
     const model = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
+    const botPhone = process.env.BOT_PHONE?.replace(/\D/g, '') || '';
     const personaExtra = getPersonaPrompt();
-    const systemText = `${BUBU_PERSONA}\n\nGaya bicara: ${personaExtra}`;
+    const staticSystemText = `${BUBU_PERSONA}\n\nGaya bicara: ${personaExtra}`;
 
     console.log(`\nModel: ${model}`);
     console.log(`Active persona: ${getActivePersonaName()}`);
-    console.log(`System prompt size: ${systemText.length} chars\n`);
-    console.log('═'.repeat(72));
+    console.log(`Static system prompt size: ${staticSystemText.length} chars\n`);
+    console.log('='.repeat(72));
 
     let allHasReasoning = true;
     let allHasResponse = true;
@@ -55,13 +73,11 @@ const run = async () => {
     let totalSentences = 0;
     let totalWords = 0;
 
-    // Emoji regex covers common WhatsApp pictograph ranges.
     const EMOJI_RE = /\p{Extended_Pictographic}/gu;
     const countEmoji = (s) => (s.match(EMOJI_RE) || []).length;
     const countSentences = (s) => (s.match(/[.!?]+(\s|$)/g) || []).length || 1;
     const countWords = (s) => s.trim().split(/\s+/).filter(Boolean).length;
 
-    // Banlist of English phrases that should NOT appear (too Jaksel for general users).
     const BANLIST = [
         'literally', 'honestly', 'basically', 'actually', 'kinda', 'which is',
         'for real', 'ngl', 'tbh', 'ready to go', 'all ears', 'real talk', 'real quick',
@@ -75,15 +91,30 @@ const run = async () => {
         const low = s.toLowerCase();
         return BANLIST.filter((b) => low.includes(b));
     };
+    const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
     let totalBanHits = 0;
+    let totalPolicyFailures = 0;
+
+    const policyCheck = (label, fn) => {
+        try {
+            fn();
+            console.log(`    ${label.padEnd(16)}: OK`);
+        } catch (e) {
+            totalPolicyFailures += 1;
+            console.log(`    ${label.padEnd(16)}: FAIL - ${e?.message || e}`);
+        }
+    };
 
     for (const sc of SCENARIOS) {
         const t0 = Date.now();
         const userMsg = `[${sc.sender}] ${sc.message}`;
+        const systemBlocks = buildSystemBlocks(staticSystemText, sc.dynamicContext || '');
+
         try {
             const res = await anthropic.messages.create({
                 model,
-                system: systemText,
+                system: systemBlocks,
                 messages: [{ role: 'user', content: userMsg }],
                 max_tokens: 1200,
                 temperature: 0.85,
@@ -105,10 +136,11 @@ const run = async () => {
 
             console.log(`\n[${sc.label}]`);
             console.log(`USER (${sc.sender}): ${sc.message}`);
-            console.log(`\n  reasoning:`);
+            console.log('\n  reasoning:');
             console.log(`    ${(reasoning || '<MISSING>').replace(/\n/g, '\n    ')}`);
-            console.log(`\n  response → kirim ke WhatsApp:`);
+            console.log('\n  response -> kirim ke WhatsApp:');
             console.log(`    ${(response || '<MISSING>').replace(/\n/g, '\n    ')}`);
+
             const leakage = response && /<reasoning|<\/reasoning|<response|<\/response/i.test(response);
             const emojiCount = response ? countEmoji(response) : 0;
             const sentenceCount = response ? countSentences(response) : 0;
@@ -116,40 +148,69 @@ const run = async () => {
             totalEmoji += emojiCount;
             totalSentences += sentenceCount;
             totalWords += wordCount;
-            const emojiFlag = emojiCount > 1 ? ' ⚠️ over 1' : '';
-            const lengthFlag = sentenceCount > 5 ? ' ⚠️ over 5' : '';
-            console.log(`\n  checks:`);
+
+            const emojiFlag = emojiCount > 1 ? ' over 1' : '';
+            const lengthFlag = sentenceCount > 5 ? ' over 5' : '';
+            console.log('\n  checks:');
             console.log(`    has <reasoning>: ${reasoning ? 'YES' : 'NO'}`);
             console.log(`    has <response> : ${response ? 'YES' : 'NO'}`);
-            console.log(`    tag leakage    : ${leakage ? 'LEAKED ⚠️' : 'none'}`);
+            console.log(`    tag leakage    : ${leakage ? 'LEAKED' : 'none'}`);
             console.log(`    emoji count    : ${emojiCount}${emojiFlag}`);
             console.log(`    sentences      : ${sentenceCount}${lengthFlag}`);
             console.log(`    word count     : ${wordCount}`);
+
             const banned = findBanned(response);
             totalBanHits += banned.length;
-            console.log(`    banned phrases : ${banned.length === 0 ? 'none ✓' : 'HIT ⚠️ ' + banned.join(', ')}`);
+            console.log(`    banned phrases : ${banned.length === 0 ? 'none' : 'HIT ' + banned.join(', ')}`);
+
+            policyCheck('tag leakage', () => {
+                assert.equal(Boolean(leakage), false);
+            });
+            if (sc.expectNoRecite) {
+                const forbidden = ['WhatsApp', 'WAHA'];
+                if (botPhone) forbidden.push(botPhone);
+                policyCheck('anti-recite', () => {
+                    assert.doesNotMatch(response || '', new RegExp(forbidden.map(escapeRe).join('|'), 'i'));
+                });
+            }
+            if (sc.expectAssistantDigital) {
+                policyCheck('honest identity', () => {
+                    assert.match(response || '', /asisten digital/i);
+                });
+            }
+            if (sc.expectGroupName) {
+                policyCheck('direct context', () => {
+                    assert.match(response || '', new RegExp(escapeRe(sc.expectGroupName), 'i'));
+                });
+            }
+
             console.log(`    latency        : ${elapsed}ms`);
             console.log(`    tokens         : in=${res.usage?.input_tokens} out=${res.usage?.output_tokens}`);
-            console.log('─'.repeat(72));
+            console.log('-'.repeat(72));
         } catch (e) {
             console.log(`\n[${sc.label}] ERROR: ${e?.message || e}`);
-            console.log('─'.repeat(72));
+            console.log('-'.repeat(72));
             allHasReasoning = false;
             allHasResponse = false;
         }
     }
 
-    console.log('\n═'.repeat(72));
+    console.log('\n' + '='.repeat(72));
     console.log('SUMMARY');
     console.log(`  Scenarios: ${SCENARIOS.length}`);
-    console.log(`  All emit reasoning : ${allHasReasoning ? 'YES ✓' : 'NO ✗'}`);
-    console.log(`  All emit response  : ${allHasResponse ? 'YES ✓' : 'NO ✗'}`);
+    console.log(`  All emit reasoning : ${allHasReasoning ? 'YES' : 'NO'}`);
+    console.log(`  All emit response  : ${allHasResponse ? 'YES' : 'NO'}`);
     console.log(`  Total tokens: in=${totalInTokens} out=${totalOutTokens}`);
     console.log(`  Avg latency : ${Math.round(totalMs / SCENARIOS.length)}ms / response`);
-    console.log(`  Avg emoji   : ${(totalEmoji / SCENARIOS.length).toFixed(2)} / response (target ≤1)`);
+    console.log(`  Avg emoji   : ${(totalEmoji / SCENARIOS.length).toFixed(2)} / response (target <=1)`);
     console.log(`  Avg length  : ${(totalSentences / SCENARIOS.length).toFixed(1)} sentences, ${Math.round(totalWords / SCENARIOS.length)} words`);
-    console.log(`  Banlist hits: ${totalBanHits} ${totalBanHits === 0 ? '✓' : '✗'}`);
-    console.log('═'.repeat(72));
+    console.log(`  Banlist hits: ${totalBanHits}`);
+    console.log(`  Policy fails: ${totalPolicyFailures}`);
+    console.log('='.repeat(72));
+
+    if (!allHasReasoning || !allHasResponse || totalBanHits > 0 || totalPolicyFailures > 0) {
+        process.exitCode = 1;
+    }
 };
 
 run().catch((e) => {

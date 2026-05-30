@@ -19,7 +19,8 @@ const {
 } = require('./modules/messageTriggers');
 const { createDebugStore, previewText, safeError } = require('./modules/webhookDebug');
 const { parseBubuReply } = require('./modules/reasoning');
-const { BUBU_PERSONA } = require('./modules/bubuPersona');
+const { buildBubuPersona } = require('./modules/bubuPersona');
+const { buildSystemBlocks } = require('./modules/systemBlocks');
 
 const app = express();
 app.use(express.json());
@@ -36,6 +37,7 @@ const BOT_LID = process.env.BOT_LID?.replace(/@lid$/i, '') || '';
 const PORT = process.env.PORT || 3000;
 const DEBUG_TOKEN = process.env.DEBUG_TOKEN || '';
 const WAHA_POLL_INTERVAL_MS = parseInt(process.env.WAHA_POLL_INTERVAL_MS || '5000', 10);
+const BUBU_PERSONA = buildBubuPersona({ botPhone: BOT_PHONE });
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -120,7 +122,8 @@ const formatForWhatsApp = (text) => {
 const makeAskAI = (chatId, senderName) => async (systemPrompt, userMessage, useContext = true) => {
     try {
         const personaExtra = getPersonaPrompt();
-        const systemText = `${BUBU_PERSONA}\n\nGaya bicara: ${personaExtra}\n\n${systemPrompt}`;
+        const staticSystemText = `${BUBU_PERSONA}\n\nGaya bicara: ${personaExtra}`;
+        const systemBlocks = buildSystemBlocks(staticSystemText, systemPrompt);
 
         const messages = [];
 
@@ -153,7 +156,7 @@ const makeAskAI = (chatId, senderName) => async (systemPrompt, userMessage, useC
 
         const response = await anthropic.messages.create({
             model: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
-            system: systemText,
+            system: systemBlocks,
             messages: mergedMessages,
             max_tokens: 1200,
             temperature: 0.85

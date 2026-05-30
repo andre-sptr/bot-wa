@@ -4,8 +4,8 @@
 > (DM/grup, siapa lawan bicara, posisinya jalan via nomor WA lewat WAHA) —
 > **tanpa** membacakan konteks itu ke user.
 >
-> Status: 🚧 DISKUSI BERJALAN. Doc ini dibangun bertahap per poin.
-> Belum ada kode awareness yang ditulis — ini baru spec/grounding.
+> Status: Fase 2 selesai (identitas statis + anti-recite + prompt-cache blocks).
+> Awareness statis sudah masuk; awareness dinamis DM/grup lanjut di Fase 3.
 
 ---
 
@@ -91,10 +91,10 @@ Context yang di-inject ke prompt kebaca model sebagai "info baru yang berguna"
 ---
 
 ## Checklist implementasi (dari Poin 1)
-- [ ] Inject context statis (via WAHA, identitas Bubu) ke system prompt — framing "tau, bukan umumin"
+- [x] Inject context statis (via WAHA, identitas Bubu) ke system prompt — framing "tau, bukan umumin"
 - [ ] Inject context dinamis (DM vs grup, senderName) sebagai background, bukan announcement
-- [ ] Negative instruction + contoh BENAR/SALAH biar ga recite
-- [ ] Aturan: reasoning boleh pakai konteks, response jangan parroting
+- [x] Negative instruction + contoh BENAR/SALAH biar ga recite
+- [x] Aturan: reasoning boleh pakai konteks, response jangan parroting
 - [ ] Wire isi quoted/reply message ke konteks AI (sub-topik B)
 - [ ] Endpoint ambil + cache participants grup (sub-topik C)
 - [ ] Riset & pecahkan LID → nomor untuk tagging (sub-topik C)
@@ -266,7 +266,7 @@ risiko (yang besar/berisiko di belakang). Mulai konservatif, tune live.
    nyinggung hal dari DM. → Fase 1 & 3.
    - REFINEMENT (tata krama sosial, sejalan Aturan #1): Bubu inget semua, TAPI ga
      nyeplosin hal jelas-privat dari DM pas di grup, kecuali orangnya sendiri yang ngangkat.
-     Temen yang sopan, bukan ember. [perlu konfirmasi user]
+     Temen yang sopan, bukan ember. [disetujui user 2026-05-30]
    - Cross-PERSON tetap aman: memori Budi ga pernah muncul buat Andre (key by PERSON,
      bukan cuma chatId). Isolasi antar-orang yang dulu diverifikasi → TETAP berlaku.
    - Dependency teknis: nyambungin grup-Andre (@lid) = DM-Andre (@c.us) butuh resolusi
@@ -288,11 +288,24 @@ risiko (yang besar/berisiko di belakang). Mulai konservatif, tune live.
   cuma inject top-2 relevan. Person-keying (unified cross-context) menyusul di Fase 3.
 - ⚙️ Dipengaruhi pertanyaan: cross-context (scoping memory) → diimplement Fase 3
 
-## Fase 2 — Identitas statis + anti-recite (jantung visi) 🟢
-- Tambah identitas statis ke BUBU_PERSONA: bales chat via WhatsApp/WAHA, nomor (BOT_PHONE),
-  dibuat Andre — dengan framing Aturan #1 (tau, BUKAN umumin).
-- Aktifkan prompt caching di blok statis (token win).
-- Test: live test — Bubu ga recite konteks, tapi tau kalau ditanya langsung.
+## Fase 2 — Identitas statis + anti-recite (jantung visi) ✅ SELESAI
+- [x] `modules/bubuPersona.js`: `buildBubuPersona({ botPhone })` jadi single source of truth
+  persona statis. Prompt sekarang inject konteks WhatsApp/WAHA + nomor bot, dengan Aturan #1:
+  konteks adalah lensa, bukan naskah.
+- [x] `server.js` dan `test/liveReasoning.js`: pakai builder supaya `BOT_PHONE` dari env masuk
+  ke persona statis.
+- [x] Prompt caching: `modules/systemBlocks.js` memisahkan blok statis cached dan blok dinamis
+  uncached. `cache_control: { type: "ephemeral" }` ditempel di akhir blok statis.
+- [x] Live anti-recite test: greeting tidak menyebut WhatsApp/WAHA/nomor; pertanyaan bot/AI
+  dijawab jujur sebagai asisten digital; pertanyaan konteks grup boleh menyebut nama grup.
+- Catatan cache: docs Anthropic per 2026-05-30 menyebut minimum cacheable prompt untuk Claude
+  Haiku 4.5 adalah 4.096 token. Live test saat ini menunjukkan input sekitar 1.861 token,
+  jadi struktur caching sudah benar, tapi belum boleh diklaim menghemat sampai prompt statis
+  melewati minimum atau `usage.cache_creation_input_tokens/cache_read_input_tokens` > 0.
+- Verifikasi: `node -c server.js`; `node --test test/persistence.test.js test/bubuPersona.test.js
+  test/systemBlocks.test.js test/reasoning.test.js test/messageTriggers.test.js
+  test/webhookDebug.test.js` = 49/49 pass; `node test/liveReasoning.js` = 7 skenario,
+  policy fails 0.
 - Dependency: none (fondasi Fase 3-4).
 - ⚙️ Dipengaruhi pertanyaan: identitas (ngaku AI atau human-like)
 
