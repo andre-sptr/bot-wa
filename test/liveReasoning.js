@@ -7,6 +7,7 @@ const { getPersonaPrompt, getActivePersonaName } = require('../modules/aiFeature
 const { parseBubuReply } = require('../modules/reasoning');
 const { buildBubuPersona } = require('../modules/bubuPersona');
 const { buildSystemBlocks } = require('../modules/systemBlocks');
+const { buildDynamicAwarenessContext } = require('../modules/aiAdvanced');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const BUBU_PERSONA = buildBubuPersona({ botPhone: process.env.BOT_PHONE?.replace(/\D/g, '') || '' });
@@ -17,6 +18,31 @@ const SCENARIOS = [
         sender: 'Andre',
         message: 'halo',
         expectNoRecite: true,
+    },
+    {
+        label: 'Dynamic DM context stays quiet',
+        sender: 'Andre',
+        message: 'halo',
+        dynamicContext: buildDynamicAwarenessContext({
+            chatType: 'dm',
+            senderName: 'Andre',
+            senderJid: '628123@c.us',
+            chatId: '628123@c.us',
+        }),
+        forbiddenTerms: ['DM', 'chat pribadi', '628123@c.us'],
+    },
+    {
+        label: 'Dynamic group context stays quiet',
+        sender: 'Rina',
+        message: 'halo bubu',
+        dynamicContext: buildDynamicAwarenessContext({
+            chatType: 'group',
+            chatName: 'Draft Awareness',
+            senderName: 'Rina',
+            senderJid: '123@lid',
+            chatId: '120@g.us',
+        }),
+        forbiddenTerms: ['Draft Awareness', '123@lid', '120@g.us'],
     },
     {
         label: 'Honest AI identity',
@@ -68,6 +94,8 @@ const run = async () => {
     let allHasResponse = true;
     let totalInTokens = 0;
     let totalOutTokens = 0;
+    let totalCacheCreateTokens = 0;
+    let totalCacheReadTokens = 0;
     let totalMs = 0;
     let totalEmoji = 0;
     let totalSentences = 0;
@@ -124,6 +152,8 @@ const run = async () => {
             totalMs += elapsed;
             totalInTokens += res.usage?.input_tokens || 0;
             totalOutTokens += res.usage?.output_tokens || 0;
+            totalCacheCreateTokens += res.usage?.cache_creation_input_tokens || 0;
+            totalCacheReadTokens += res.usage?.cache_read_input_tokens || 0;
 
             const rawText = res.content
                 .filter((b) => b.type === 'text')
@@ -183,9 +213,14 @@ const run = async () => {
                     assert.match(response || '', new RegExp(escapeRe(sc.expectGroupName), 'i'));
                 });
             }
+            if (sc.forbiddenTerms) {
+                policyCheck('context quiet', () => {
+                    assert.doesNotMatch(response || '', new RegExp(sc.forbiddenTerms.map(escapeRe).join('|'), 'i'));
+                });
+            }
 
             console.log(`    latency        : ${elapsed}ms`);
-            console.log(`    tokens         : in=${res.usage?.input_tokens} out=${res.usage?.output_tokens}`);
+            console.log(`    tokens         : in=${res.usage?.input_tokens} cache_create=${res.usage?.cache_creation_input_tokens || 0} cache_read=${res.usage?.cache_read_input_tokens || 0} out=${res.usage?.output_tokens}`);
             console.log('-'.repeat(72));
         } catch (e) {
             console.log(`\n[${sc.label}] ERROR: ${e?.message || e}`);
@@ -201,6 +236,7 @@ const run = async () => {
     console.log(`  All emit reasoning : ${allHasReasoning ? 'YES' : 'NO'}`);
     console.log(`  All emit response  : ${allHasResponse ? 'YES' : 'NO'}`);
     console.log(`  Total tokens: in=${totalInTokens} out=${totalOutTokens}`);
+    console.log(`  Cache tokens: create=${totalCacheCreateTokens} read=${totalCacheReadTokens}`);
     console.log(`  Avg latency : ${Math.round(totalMs / SCENARIOS.length)}ms / response`);
     console.log(`  Avg emoji   : ${(totalEmoji / SCENARIOS.length).toFixed(2)} / response (target <=1)`);
     console.log(`  Avg length  : ${(totalSentences / SCENARIOS.length).toFixed(1)} sentences, ${Math.round(totalWords / SCENARIOS.length)} words`);

@@ -4,8 +4,8 @@
 > (DM/grup, siapa lawan bicara, posisinya jalan via nomor WA lewat WAHA) —
 > **tanpa** membacakan konteks itu ke user.
 >
-> Status: Fase 2 selesai (identitas statis + anti-recite + prompt-cache blocks).
-> Awareness statis sudah masuk; awareness dinamis DM/grup lanjut di Fase 3.
+> Status: Fase 3 selesai (awareness dinamis DM/grup + sender).
+> Reply-bubble awareness lanjut di Fase 4.
 
 ---
 
@@ -92,7 +92,7 @@ Context yang di-inject ke prompt kebaca model sebagai "info baru yang berguna"
 
 ## Checklist implementasi (dari Poin 1)
 - [x] Inject context statis (via WAHA, identitas Bubu) ke system prompt — framing "tau, bukan umumin"
-- [ ] Inject context dinamis (DM vs grup, senderName) sebagai background, bukan announcement
+- [x] Inject context dinamis (DM vs grup, senderName) sebagai background, bukan announcement
 - [x] Negative instruction + contoh BENAR/SALAH biar ga recite
 - [x] Aturan: reasoning boleh pakai konteks, response jangan parroting
 - [ ] Wire isi quoted/reply message ke konteks AI (sub-topik B)
@@ -309,10 +309,27 @@ risiko (yang besar/berisiko di belakang). Mulai konservatif, tune live.
 - Dependency: none (fondasi Fase 3-4).
 - ⚙️ Dipengaruhi pertanyaan: identitas (ngaku AI atau human-like)
 
-## Fase 3 — Awareness dinamis: DM/grup + sender 🟡
-- Inject per-pesan di makeAskAI: tipe chat (DM/grup), nama grup, sender (udah ada).
-- Rapikan contextAwareResponse yang skrg nyampur dinamis ke arg systemPrompt.
-- Test: live DM vs grup — beda tone, tetap ga ngumumin konteks.
+## Fase 3 — Awareness dinamis: DM/grup + sender ✅ SELESAI
+- [x] `modules/aiAdvanced.js`: tambah `buildDynamicAwarenessContext` untuk blok konteks
+  dinamis yang eksplisit dilabeli LATAR BELAKANG, bukan announcement.
+- [x] `modules/aiAdvanced.js`: tambah `buildRuntimeChatContext` untuk derive `chatType`
+  (`dm`/`group`), `chatName` best-effort, `chatId`, dan `senderJid` dari payload runtime.
+- [x] `server.js`: `processIncomingPayload` sekarang membangun chat context sekali lalu
+  meneruskannya ke `handleNaturalLanguage` → `contextAwareResponse`.
+- [x] `contextAwareResponse`: tetap backward-compatible dengan signature lama, tapi mendukung
+  object options `{ senderName, memoryContext, chatContext }` agar context dinamis bersih
+  masuk ke blok uncached.
+- [x] Live test: tambah skenario DM dan grup casual yang memastikan context dinamis tidak
+  dibacakan; direct group context tetap boleh menyebut nama grup ketika ditanya langsung.
+- [x] Observability cache: `test/liveReasoning.js` sekarang menampilkan
+  `cache_creation_input_tokens` dan `cache_read_input_tokens`. Verifikasi 2026-05-30 masih
+  `create=0 read=0`, sesuai catatan Fase 2 bahwa prompt Haiku 4.5 belum melewati threshold.
+- Verifikasi: `node -c server.js`; `node --test test/persistence.test.js test/bubuPersona.test.js
+  test/systemBlocks.test.js test/awarenessContext.test.js test/reasoning.test.js
+  test/messageTriggers.test.js test/webhookDebug.test.js` = 56/56 pass; `node test/liveReasoning.js`
+  = 9 skenario, banlist hits 0, policy fails 0.
+- Deferred: isi quoted/reply bubble tetap Fase 4; fetch/cache nama grup resmi dari WAHA tetap
+  Fase 5 kalau payload runtime tidak membawa nama grup.
 - Dependency: Fase 2.
 
 ## Fase 4 — Reply-bubble awareness 🟡

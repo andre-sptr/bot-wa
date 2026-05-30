@@ -78,13 +78,61 @@ const autoCategorize = (message) => {
 };
 
 // Context-aware AI response with sender awareness and memory
-const contextAwareResponse = async (message, askAI, senderName, memoryContext) => {
+const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJid, chatId } = {}) => {
+    const lines = [
+        'Konteks percakapan saat ini (LATAR BELAKANG, bukan buat diumumin):',
+        '- Pakai ini untuk memahami situasi, tone, dan audiens.',
+        '- Jangan sebut DM/grup/nama grup/JID kecuali user nanya langsung.',
+    ];
+
+    if (chatType === 'dm') lines.push('- Tipe chat: chat pribadi (DM).');
+    else if (chatType === 'group') lines.push('- Tipe chat: grup.');
+    if (chatName) lines.push(`- Nama grup: ${chatName}.`);
+    if (senderName) lines.push(`- Pengirim: ${senderName}.`);
+    if (senderJid) lines.push(`- ID pengirim: ${senderJid}.`);
+    if (chatId) lines.push(`- ID chat: ${chatId}.`);
+
+    return lines.join('\n');
+};
+
+const firstText = (...values) => values.find((value) => typeof value === 'string' && value.trim())?.trim() || '';
+
+const buildRuntimeChatContext = ({ chatId = '', senderJid = '', payload = {} } = {}) => {
+    const data = payload._data || {};
+    const isGroup = chatId.endsWith('@g.us');
+
+    return {
+        chatType: isGroup ? 'group' : 'dm',
+        chatName: isGroup
+            ? firstText(
+                data.chatName,
+                payload.chatName,
+                payload.chat?.name,
+                data.chat?.name,
+                data._chat?.name
+            )
+            : '',
+        chatId,
+        senderJid,
+    };
+};
+
+const contextAwareResponse = async (message, askAI, senderOrOptions, memoryContextArg) => {
     try {
+        const options = senderOrOptions && typeof senderOrOptions === 'object'
+            ? senderOrOptions
+            : { senderName: senderOrOptions, memoryContext: memoryContextArg };
+        const { senderName, memoryContext, chatContext } = options;
         const now = new Date();
         const hour = parseInt(now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', hour: 'numeric', hour12: false }));
         const greeting = hour < 11 ? 'pagi' : hour < 15 ? 'siang' : hour < 18 ? 'sore' : 'malam';
 
-        let contextInfo = `Konteks:
+        let contextInfo = `${buildDynamicAwarenessContext({
+            ...chatContext,
+            senderName: chatContext?.senderName || senderName,
+        })}
+
+Konteks operasional:
 - Waktu: ${now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}
 - Hari: ${now.toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', weekday: 'long' })}
 - Sesi: ${greeting}`;
@@ -127,6 +175,8 @@ const summarizeConversation = async (history, askAI) => {
 module.exports = {
     classifyIntent,
     autoCategorize,
+    buildDynamicAwarenessContext,
+    buildRuntimeChatContext,
     contextAwareResponse,
     summarizeConversation,
 };

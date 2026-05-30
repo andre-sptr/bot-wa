@@ -4,7 +4,13 @@ const axios = require('axios');
 const cron = require('node-cron');
 const Anthropic = require('@anthropic-ai/sdk');
 const { getHistory, addMessage, clearHistory, getStats, getSummaries, getRelevantMemory, withChatLock } = require('./chatContext');
-const { classifyIntent, autoCategorize, contextAwareResponse, summarizeConversation } = require('./modules/aiAdvanced');
+const {
+    classifyIntent,
+    autoCategorize,
+    buildRuntimeChatContext,
+    contextAwareResponse,
+    summarizeConversation,
+} = require('./modules/aiAdvanced');
 const { getPersonaPrompt, getActivePersonaName } = require('./modules/aiFeatures');
 const { loadAndStartReminders, manageRecurringReminder, manageServerMonitor, checkAllServers } = require('./modules/automation');
 const {
@@ -468,7 +474,7 @@ const CATEGORY_EMOJI = {
     INFO: '', GREETING: ''
 };
 
-const handleNaturalLanguage = async (msg, chatId, senderName, askAI) => {
+const handleNaturalLanguage = async (msg, chatId, senderName, askAI, chatContext) => {
     try {
         const category = autoCategorize(msg);
         const intent = classifyIntent(msg);
@@ -479,7 +485,7 @@ const handleNaturalLanguage = async (msg, chatId, senderName, askAI) => {
         }
 
         const memoryContext = getRelevantMemory(chatId, msg);
-        const response = await contextAwareResponse(msg, askAI, senderName, memoryContext);
+        const response = await contextAwareResponse(msg, askAI, { senderName, memoryContext, chatContext });
         if (!response) return null;
 
         const prefix = category === 'URGENT' ? '! ' : '';
@@ -562,6 +568,7 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
     const isGroup = chatId.endsWith('@g.us');
     const senderJid = isGroup ? getPayloadSenderId(payload, chatId) : chatId;
     const senderName = _data.notifyName || payload.notifyName || senderJid.split('@')[0];
+    const chatContext = buildRuntimeChatContext({ chatId, senderJid, payload });
 
     // === Trigger detection ===
     const learnedFromIncoming = learnBotMentionFromIncoming(botTriggerState, payload);
@@ -607,7 +614,7 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
         if (trigger === 'cmd') {
             reply = await processCommand(msgBody, chatId, askAI);
         } else {
-            reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI);
+            reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext);
         }
 
         if (!reply) {
