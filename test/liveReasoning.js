@@ -96,6 +96,29 @@ const SCENARIOS = [
         sender: 'Rina',
         message: 'bubu sotoy banget sih, lo tau apa coba?',
     },
+    {
+        label: 'Proactive Mode - High Value (Should Reply)',
+        sender: 'Budi',
+        message: 'Eh menurut kalian, mending kita pakai PostgreSQL atau MongoDB ya buat project baru ini? Agak bingung.',
+        dynamicContext: buildDynamicAwarenessContext({
+            chatType: 'group',
+            chatName: 'Tech Talk',
+            senderName: 'Budi',
+            proactiveMode: true,
+        }),
+    },
+    {
+        label: 'Proactive Mode - Low Value (Should SKIP)',
+        sender: 'Siti',
+        message: 'wkwkwk oke sip, mantap.',
+        dynamicContext: buildDynamicAwarenessContext({
+            chatType: 'group',
+            chatName: 'Tech Talk',
+            senderName: 'Siti',
+            proactiveMode: true,
+        }),
+        expectSkip: true,
+    },
 ];
 
 const run = async () => {
@@ -240,6 +263,15 @@ const run = async () => {
             if (sc.expectQuoteUse) {
                 policyCheck('quoted context', () => {
                     assert.match(response || '', sc.expectQuoteUse);
+                });
+            }
+            if (sc.expectSkip) {
+                policyCheck('skip marker', () => {
+                    assert.match(response || '', /\[SKIP\]/i);
+                });
+            } else if (sc.dynamicContext && sc.dynamicContext.includes('MODE PROAKTIF')) {
+                policyCheck('proactive replied', () => {
+                    assert.doesNotMatch(response || '', /\[SKIP\]/i);
                 });
             }
 
