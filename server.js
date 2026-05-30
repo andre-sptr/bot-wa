@@ -24,7 +24,7 @@ const {
     rememberBotMessage,
 } = require('./modules/messageTriggers');
 const { createDebugStore, previewText, safeError } = require('./modules/webhookDebug');
-const { parseBubuReply } = require('./modules/reasoning');
+const { parseBubuReply, extractDMs, stripDMTags } = require('./modules/reasoning');
 const { buildBubuPersona } = require('./modules/bubuPersona');
 const { buildSystemBlocks } = require('./modules/systemBlocks');
 const {
@@ -664,7 +664,7 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
         if (roster && roster.participants) {
             const names = roster.participants
                 .filter(p => p.name)
-                .map(p => p.name)
+                .map(p => `${p.name} (${p.id})`)
                 .slice(0, 20);
             chatContext.rosterSummary = names.length > 0
                 ? `${roster.participants.length} anggota (${names.join(', ')})`
@@ -717,6 +717,23 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
                         }
 
                         markProactiveSent(chatId);
+
+                        const dms = extractDMs(reply);
+                        reply = stripDMTags(reply);
+
+                        if (dms.length > 0) {
+                            record(`${source}-proactive-dms-detected`, { count: dms.length });
+                            for (const dm of dms) {
+                                let target = dm.target;
+                                if (!target.includes('@')) {
+                                    target += '@c.us';
+                                }
+                                await sendWA(dm.message, target);
+                                record(`${source}-proactive-dm-sent`, { target, preview: previewText(dm.message) });
+                            }
+                        }
+
+                        if (!reply) return; // If the reply was only DMs, don't send an empty message
 
                         // Mention pipeline (reuse Fase 6)
                         let finalReply = reply;
@@ -797,6 +814,23 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
             });
             return;
         }
+
+        const dms = extractDMs(reply);
+        reply = stripDMTags(reply);
+
+        if (dms.length > 0) {
+            record(`${source}-dms-detected`, { count: dms.length });
+            for (const dm of dms) {
+                let target = dm.target;
+                if (!target.includes('@')) {
+                    target += '@c.us';
+                }
+                await sendWA(dm.message, target);
+                record(`${source}-dm-sent`, { target, preview: previewText(dm.message) });
+            }
+        }
+
+        if (!reply) return; // If the reply was only DMs, don't send an empty message to the chat
 
         record(`${source}-reply-generated`, {
             trigger,

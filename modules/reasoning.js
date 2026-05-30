@@ -35,8 +35,26 @@ const parseBubuReply = (rawText) => {
     };
 };
 
+const extractDMs = (rawText) => {
+    if (!rawText) return [];
+    const dms = [];
+    const re = /<dm\s+target="([^"]+)">([\s\S]*?)<\/dm>/gi;
+    let match;
+    while ((match = re.exec(rawText)) !== null) {
+        dms.push({ target: match[1].trim(), message: match[2].trim() });
+    }
+    return dms;
+};
+
+const stripDMTags = (text) => {
+    if (!text) return text;
+    return text.replace(/<dm\s+target="([^"]+)">[\s\S]*?<\/dm>/gi, '').trim();
+};
+
 module.exports = {
     extractTag,
     stripTagResidue,
     parseBubuReply,
+    extractDMs,
+    stripDMTags,
 };
