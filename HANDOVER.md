@@ -42,10 +42,11 @@ Fase selesai:
 - Fase 2 — Identitas statis + anti-recite + prompt caching blocks: selesai.
 - Fase 3 — Awareness dinamis DM/grup + sender: selesai.
 - Fase 4 — Reply-bubble awareness: selesai.
+- Fase 5 — Roster grup: fetch + cache participants: selesai.
 
 Yang harus dilanjutkan:
 
-- **Fase 5 — Roster grup: fetch + cache participants + riset LID.**
+- **Fase 6 — Tagging beneran via mentions array.**
 
 ---
 

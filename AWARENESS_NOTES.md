@@ -4,8 +4,8 @@
 > (DM/grup, siapa lawan bicara, posisinya jalan via nomor WA lewat WAHA) —
 > **tanpa** membacakan konteks itu ke user.
 >
-> Status: Fase 4 selesai (reply-bubble awareness).
-> Roster grup + LID research lanjut di Fase 5.
+> Status: Fase 5 selesai (roster grup + awareness enrichment).
+> Tagging beneran lanjut di Fase 6.
 
 ---
 
@@ -97,7 +97,7 @@ Context yang di-inject ke prompt kebaca model sebagai "info baru yang berguna"
 - [x] Negative instruction + contoh BENAR/SALAH biar ga recite
 - [x] Aturan: reasoning boleh pakai konteks, response jangan parroting
 - [x] Wire isi quoted/reply message ke konteks AI (sub-topik B)
-- [ ] Endpoint ambil + cache participants grup (sub-topik C)
+- [x] Endpoint ambil + cache participants grup (sub-topik C)
 - [ ] Riset & pecahkan LID → nomor untuk tagging (sub-topik C)
 - [ ] Implement tagging via mentions array di sendWA
 
@@ -347,10 +347,43 @@ risiko (yang besar/berisiko di belakang). Mulai konservatif, tune live.
   banlist hits 0, policy fails 0.
 - Dependency: Fase 3.
 
-## Fase 5 — Roster grup: fetch + cache + LID (research-heavy) 🟠
-- Endpoint GET participants/v2 + nama grup. Cache via storage.js. Pecahkan LID→nomor.
-- Test: fetch grup asli, inspect cache, verifikasi format LID buat tagging.
-- Dependency: none teknis, tapi enrich Fase 3 (nama anggota) & WAJIB buat Fase 6.
+## Fase 5 — Roster grup: fetch + cache + LID (research-heavy) ✅ SELESAI
+- [x] `modules/groupRoster.js`: modul baru dengan pure helpers + WAHA client.
+  - `safeGroupStorageKey(groupId)`: normalize group ID ke key storage aman.
+  - `normalizeParticipant(raw)`: extract `id`, `role`, `name` dari raw WAHA participant.
+    Menangani string ID, nested `{ _serialized }`, `@c.us`, dan `@lid`.
+  - `saveRoster(groupId, participants)`: simpan via storage.js dengan metadata
+    `{ groupId, fetchedAt, participants }`.
+  - `loadRoster(groupId)`: load cached roster, return null kalau belum ada.
+  - `createGroupRosterClient({ wahaUrl, session, apiKey, httpGet })`: factory dengan
+    dependency injection. `httpGet` di-inject untuk testability (mock axios).
+    Endpoint: `GET /api/{session}/groups/{groupId}/participants/v2`.
+  - `fetchAndCacheRoster({ client, groupId })`: fetch + normalize + save. Return
+    roster object atau null on failure.
+- [x] `server.js`: import groupRoster module. Instance `groupRosterClient` dibuat saat
+  startup kalau WAHA_URL dan WAHA_SESSION tersedia.
+- [x] `server.js`: tambah command `/refresh-members` di `processCommand`:
+  - Validasi: hanya jalan di grup (`@g.us`).
+  - Fetch participants via `fetchAndCacheRoster`.
+  - Reply: "✅ Roster diupdate: X anggota (Y admin)."
+- [x] `server.js`: `/help` output diupdate dengan `/refresh-members`.
+- [x] `server.js`: `processIncomingPayload` sekarang load roster dari cache untuk group
+  chats dan menambahkan `rosterSummary` ke `chatContext`.
+- [x] `modules/aiAdvanced.js`: `buildDynamicAwarenessContext` menerima optional
+  `rosterSummary`. Kalau ada, tambahkan: `- Anggota grup: <jumlah> anggota.`
+  Tetap framing LATAR BELAKANG (anti-recite).
+- [x] `test/groupRoster.test.js`: 18 unit test TDD (RED→GREEN):
+  - 4 test `safeGroupStorageKey` (strip suffix, consistency, no suffix, special chars)
+  - 6 test `normalizeParticipant` (@c.us, @lid, nested, name, defaults, null)
+  - 3 test `saveRoster`/`loadRoster` (roundtrip, null, overwrite)
+  - 3 test `createGroupRosterClient` (URL/headers, normalized output, error)
+  - 2 test `fetchAndCacheRoster` (success+storage, failure→null)
+- Catatan LID: modul ini defensif terhadap `@lid` participants. `normalizeParticipant`
+  menyimpan ID apa adanya (baik `@c.us` maupun `@lid`). Resolusi LID↔nomor asli
+  tergantung data real dari endpoint WAHA — dicatat setelah first real fetch.
+  `contactVariants` di messageTriggers.js sudah generate `@lid` variant untuk matching.
+- Verifikasi: `node -c server.js` PASS; full test suite 80/80 pass.
+- Dependency: none teknis, tapi enrich Fase 3 (roster awareness) & WAJIB buat Fase 6.
 
 ## Fase 6 — Tagging beneran 🟠
 - sendWA pakai mentions array (format dobel: @nomor di teks + nomor@c.us di array).
