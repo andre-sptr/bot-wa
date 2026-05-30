@@ -1024,9 +1024,15 @@ const pollWahaChats = async () => {
     try {
         const data = await wahaGet(`/api/${WAHA_SESSION}/chats`, { limit: 20 });
         const chats = Array.isArray(data) ? data : [];
+        // Process both: target group AND any DM (private chat) with unread messages
         const targetMessages = chats
             .map(chat => ({ chat, payload: chat.lastMessage }))
-            .filter(item => item.payload && getPayloadChatId(item.payload) === GROUP_ID);
+            .filter(item => {
+                if (!item.payload) return false;
+                const cid = getPayloadChatId(item.payload);
+                // Include: target group OR DM (private chat)
+                return cid === GROUP_ID || cid.endsWith('@c.us');
+            });
 
         if (!pollBaselineReady) {
             targetMessages.forEach(item => markProcessedIncoming(item.payload));
