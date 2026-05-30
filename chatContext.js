@@ -1,11 +1,12 @@
 const storage = require('./modules/storage');
 
 const MAX_HISTORY = 12;
-const AUTO_EXPIRE_HOURS = 6;
+// Expiry = reset working memory (history aktif) → tetap diarsip jadi long-term memory.
+// 24 jam: continuity harian verbatim. Window aktif tetap dibatasi MAX_HISTORY pasang,
+// jadi token tetap aman.
+const AUTO_EXPIRE_HOURS = 24;
 const EXPIRE_MS = AUTO_EXPIRE_HOURS * 60 * 60 * 1000;
 const SUMMARY_THRESHOLD = 6;
-const MAX_MEMORIES_PER_CHAT = 50;
-const MAX_MEMORIES_TOTAL = 200;
 
 let sessions = storage.load('sessions', {});
 
@@ -96,21 +97,9 @@ const saveSessionMemory = (chatId, session) => {
         messageCount: session.history.length,
     });
 
-    // Prune per chat
-    const chatIds = {};
-    for (let i = memories.length - 1; i >= 0; i--) {
-        const cid = memories[i].chatId;
-        chatIds[cid] = (chatIds[cid] || 0) + 1;
-        if (chatIds[cid] > MAX_MEMORIES_PER_CHAT) {
-            memories.splice(i, 1);
-        }
-    }
-
-    // Prune total
-    if (memories.length > MAX_MEMORIES_TOTAL) {
-        memories.splice(0, memories.length - MAX_MEMORIES_TOTAL);
-    }
-
+    // Persistensi "forever": memory TIDAK di-prune. Hanya terhapus kalau owner
+    // hapus manual isi folder data/. Token tetap hemat karena retrieval (getRelevantMemory)
+    // cuma ambil top-K relevan, bukan inject semua.
     storage.save('session_memories', memories);
 };
 
@@ -156,7 +145,7 @@ const archiveSession = (chatId, session) => {
             ).join(' | '),
             expiredAt: Date.now()
         });
-        if (summaries.length > 10) summaries.shift();
+        // Persistensi "forever": summary tidak di-prune (dulu cap 10).
         storage.save('chat_summaries', summaries);
     }
 };
@@ -244,4 +233,7 @@ module.exports = {
     getSummaries,
     getRelevantMemory,
     withChatLock,
+    // Diekspos untuk pengujian retensi (Fase 1) & person-keying (Fase 3).
+    saveSessionMemory,
+    archiveSession,
 };

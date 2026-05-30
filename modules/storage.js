@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.BOT_DATA_DIR || path.join(__dirname, '..', 'data');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
