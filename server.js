@@ -37,6 +37,14 @@ const {
     formatMentionedReply,
     guardMentions,
 } = require('./modules/mentionHelper');
+const {
+    shouldConsiderProactive,
+    checkProactiveCooldown,
+    markProactiveSent,
+    saveProactiveState,
+    isProactiveEnabled,
+    PROACTIVE_SKIP_MARKER,
+} = require('./modules/proactiveGuard');
 
 const app = express();
 app.use(express.json());
@@ -479,6 +487,18 @@ const processCommand = async (msg, chatId, askAI) => {
             return `✅ Roster diupdate: ${roster.participants.length} anggota (${adminCount} admin).`;
         }
 
+        case '/aktif': {
+            if (!chatId.endsWith('@g.us')) return 'Command ini cuma bisa dipakai di grup.';
+            saveProactiveState(chatId, true);
+            return '🔊 Bubu aktif mode! Bubu boleh nimbrung kalau ada topik menarik.';
+        }
+
+        case '/diem': {
+            if (!chatId.endsWith('@g.us')) return 'Command ini cuma bisa dipakai di grup.';
+            saveProactiveState(chatId, false);
+            return '🔇 Bubu diem mode. Bubu cuma jawab kalau dipanggil.';
+        }
+
         case '/help':
             return `*Daftar Command ${getActivePersonaName()}*\n\n` +
                 `*/harga [koin]* — Harga crypto\n` +
@@ -492,7 +512,9 @@ const processCommand = async (msg, chatId, askAI) => {
                 `*/rangkum* — Rangkum percakapan\n` +
                 `*/stats* — Statistik chat\n` +
                 `*/reset* — Reset riwayat chat\n` +
-                `*/refresh-members* — Update roster anggota grup\n\n` +
+                `*/refresh-members* — Update roster anggota grup\n` +
+                `*/aktif* — Bubu boleh nimbrung di grup\n` +
+                `*/diem* — Bubu cuma jawab kalau dipanggil\n\n` +
                 `_Panggil "Bubu", reply pesan Bubu, atau tag @Bubu untuk ngobrol!_`;
 
         default:
@@ -632,6 +654,74 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
 
     const trigger = detectMessageTrigger({ body: msgBody, payload, state: botTriggerState, isDM });
     if (!trigger) {
+        // === PROACTIVE PIPELINE (group only) ===
+        if (isGroup) {
+            const category = autoCategorize(msgBody);
+            if (shouldConsiderProactive({ groupId: chatId, category, msgBody })) {
+                const cooldown = checkProactiveCooldown(chatId);
+                if (cooldown.allowed) {
+                    record(`${source}-proactive-candidate`, {
+                        category,
+                        senderName,
+                        chatId,
+                        msgPreview: previewText(msgBody),
+                    });
+
+                    markProcessedIncoming(payload);
+
+                    await withChatLock(chatId, async () => {
+                        const askAI = makeAskAI(chatId, senderName);
+
+                        // Inject proactive instruction into chatContext
+                        chatContext.proactiveMode = true;
+
+                        const reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext);
+
+                        if (!reply || reply.includes(PROACTIVE_SKIP_MARKER)) {
+                            record(`${source}-proactive-skipped`, {
+                                reason: !reply ? 'no-reply' : 'ai-skip',
+                                chatId,
+                            });
+                            return;
+                        }
+
+                        markProactiveSent(chatId);
+
+                        // Mention pipeline (reuse Fase 6)
+                        let finalReply = reply;
+                        let mentions = [];
+                        if (roster && roster.participants) {
+                            const intents = extractMentionIntents(reply, roster.participants);
+                            if (intents.length > 0) {
+                                const now = Date.now();
+                                const lastMention = mentionCooldownMap.get(chatId) || 0;
+                                if (now - lastMention >= MENTION_COOLDOWN_MS) {
+                                    const formatted = formatMentionedReply(reply, intents);
+                                    finalReply = formatted.text;
+                                    mentions = formatted.mentions;
+                                    mentionCooldownMap.set(chatId, now);
+                                }
+                            }
+                        }
+
+                        record(`${source}-proactive-reply`, {
+                            chatId,
+                            senderName,
+                            replyPreview: previewText(finalReply),
+                            mentionCount: mentions.length,
+                        });
+                        await sendWA(finalReply, chatId, mentions);
+                    });
+                    return;
+                } else {
+                    record(`${source}-proactive-cooldown`, {
+                        chatId,
+                        remainingMs: cooldown.remainingMs,
+                    });
+                }
+            }
+        }
+
         record(`${source}-no-trigger`, {
             payload: summarizePayload(body, payload, chatId, senderJid),
             state: summarizeBotState(),

@@ -86,7 +86,7 @@ const compactQuotedText = (text = '', maxLength = 500) => {
     return `${normalized.slice(0, maxLength - 1)}…`;
 };
 
-const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJid, chatId, quotedMessage, rosterSummary } = {}) => {
+const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJid, chatId, quotedMessage, rosterSummary, proactiveMode } = {}) => {
     const lines = [
         'Konteks percakapan saat ini (LATAR BELAKANG, bukan buat diumumin):',
         '- Pakai ini untuk memahami situasi, tone, dan audiens.',
@@ -107,6 +107,15 @@ const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJi
         const author = quotedMessage.author ? ` dari ${quotedMessage.author}` : '';
         const owner = quotedMessage.fromBot ? ' (pesan Bubu)' : '';
         lines.push(`- Pesan ini me-reply bubble sebelumnya${author}${owner}: "${compactQuotedText(quotedMessage.text)}".`);
+    }
+
+    if (proactiveMode) {
+        lines.push('');
+        lines.push('PENTING — MODE PROAKTIF:');
+        lines.push('- Pesan ini TIDAK ditujukan ke kamu. Kamu nimbrung atas inisiatif sendiri.');
+        lines.push('- Jawab HANYA kalau kamu punya value asli untuk ditambahkan (info berguna, jawaban pertanyaan, insight menarik).');
+        lines.push('- Kalau ragu, pesan cuma basa-basi, atau kamu ga punya value → jawab HANYA dengan [SKIP].');
+        lines.push('- Jangan memaksakan diri untuk berkontribusi. Diem lebih baik daripada nimbrung ga jelas.');
     }
 
     return lines.join('\n');
