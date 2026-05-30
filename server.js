@@ -32,6 +32,11 @@ const {
     fetchAndCacheRoster,
     loadRoster,
 } = require('./modules/groupRoster');
+const {
+    extractMentionIntents,
+    formatMentionedReply,
+    guardMentions,
+} = require('./modules/mentionHelper');
 
 const app = express();
 app.use(express.json());
@@ -59,6 +64,9 @@ const webhookDebug = createDebugStore({ maxEntries: 100 });
 // ==========================================
 const rateLimitMap = new Map();
 const RATE_LIMIT_MS = 3000;
+
+const mentionCooldownMap = new Map();
+const MENTION_COOLDOWN_MS = 60_000; // 60s cooldown per group for mentions
 
 const isRateLimited = (userId) => {
     const now = Date.now();
@@ -333,13 +341,17 @@ const analyzeWahaMessage = (payload = {}, chat = null) => {
     };
 };
 
-const sendWA = async (text, chatId = GROUP_ID) => {
+const sendWA = async (text, chatId = GROUP_ID, mentions = []) => {
     try {
-        const res = await axios.post(`${WAHA_URL}/api/sendText`, {
+        const body = {
             session: WAHA_SESSION,
             chatId,
-            text
-        }, {
+            text,
+        };
+        const safeMentions = guardMentions(mentions);
+        if (safeMentions.length > 0) body.mentions = safeMentions;
+
+        const res = await axios.post(`${WAHA_URL}/api/sendText`, body, {
             headers: { 'X-Api-Key': WAHA_API_KEY, 'Content-Type': 'application/json' }
         });
 
@@ -350,6 +362,7 @@ const sendWA = async (text, chatId = GROUP_ID) => {
             responseId: res.data?.id?._serialized || res.data?.id || null,
             trackedMessageIds: tracked.messageIds,
             trackedBotIdentifiers: tracked.botIdentifiers,
+            mentionCount: safeMentions.length,
             state: summarizeBotState(),
         });
         return { ok: true, data: res.data, tracked };
@@ -593,10 +606,17 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
     const chatContext = buildRuntimeChatContext({ chatId, senderJid, payload });
 
     // Enrich with roster summary for group chats
+    let roster = null;
     if (isGroup) {
-        const roster = loadRoster(chatId);
+        roster = loadRoster(chatId);
         if (roster && roster.participants) {
-            chatContext.rosterSummary = `${roster.participants.length} anggota`;
+            const names = roster.participants
+                .filter(p => p.name)
+                .map(p => p.name)
+                .slice(0, 20);
+            chatContext.rosterSummary = names.length > 0
+                ? `${roster.participants.length} anggota (${names.join(', ')})`
+                : `${roster.participants.length} anggota`;
         }
     }
 
@@ -662,7 +682,33 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
             chatId,
             replyPreview: previewText(reply),
         });
-        const sendResult = await sendWA(reply, chatId);
+
+        // Mention pipeline for group chats
+        let mentions = [];
+        if (isGroup && roster && roster.participants) {
+            const intents = extractMentionIntents(reply, roster.participants);
+            if (intents.length > 0) {
+                const now = Date.now();
+                const lastMention = mentionCooldownMap.get(chatId) || 0;
+                if (now - lastMention >= MENTION_COOLDOWN_MS) {
+                    const formatted = formatMentionedReply(reply, intents);
+                    reply = formatted.text;
+                    mentions = formatted.mentions;
+                    mentionCooldownMap.set(chatId, now);
+                    record(`${source}-mentions-applied`, {
+                        mentionCount: mentions.length,
+                        intents: intents.map(i => ({ matched: i.matchedText, id: i.participant.id })),
+                    });
+                } else {
+                    record(`${source}-mentions-cooldown`, {
+                        chatId,
+                        cooldownRemainingMs: MENTION_COOLDOWN_MS - (now - lastMention),
+                    });
+                }
+            }
+        }
+
+        const sendResult = await sendWA(reply, chatId, mentions);
         record(sendResult.ok ? `${source}-reply-sent` : `${source}-reply-send-failed`, {
             trigger,
             senderName,

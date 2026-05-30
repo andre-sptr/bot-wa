@@ -99,7 +99,10 @@ const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJi
     if (senderName) lines.push(`- Pengirim: ${senderName}.`);
     if (senderJid) lines.push(`- ID pengirim: ${senderJid}.`);
     if (chatId) lines.push(`- ID chat: ${chatId}.`);
-    if (rosterSummary) lines.push(`- Anggota grup: ${rosterSummary}.`);
+    if (rosterSummary) {
+        lines.push(`- Anggota grup: ${rosterSummary}.`);
+        lines.push('- Kalau perlu nge-tag seseorang, tulis @NamaOrang di pesanmu. Jangan tag semua orang (@all). Tag HANYA kalau relevan.');
+    }
     if (quotedMessage?.text) {
         const author = quotedMessage.author ? ` dari ${quotedMessage.author}` : '';
         const owner = quotedMessage.fromBot ? ' (pesan Bubu)' : '';
