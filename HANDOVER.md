@@ -43,10 +43,11 @@ Fase selesai:
 - Fase 3 — Awareness dinamis DM/grup + sender: selesai.
 - Fase 4 — Reply-bubble awareness: selesai.
 - Fase 5 — Roster grup: fetch + cache participants: selesai.
+- Fase 6 — Tagging beneran via mentions array: selesai.
 
 Yang harus dilanjutkan:
 
-- **Fase 6 — Tagging beneran via mentions array.**
+- **Fase 7 — Proaktif + guardrail.**
 
 ---
 

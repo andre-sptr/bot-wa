@@ -4,8 +4,8 @@
 > (DM/grup, siapa lawan bicara, posisinya jalan via nomor WA lewat WAHA) —
 > **tanpa** membacakan konteks itu ke user.
 >
-> Status: Fase 5 selesai (roster grup + awareness enrichment).
-> Tagging beneran lanjut di Fase 6.
+> Status: Fase 6 selesai (tagging beneran via mentions).
+> Proaktif + guardrail lanjut di Fase 7.
 
 ---
 
@@ -98,8 +98,8 @@ Context yang di-inject ke prompt kebaca model sebagai "info baru yang berguna"
 - [x] Aturan: reasoning boleh pakai konteks, response jangan parroting
 - [x] Wire isi quoted/reply message ke konteks AI (sub-topik B)
 - [x] Endpoint ambil + cache participants grup (sub-topik C)
-- [ ] Riset & pecahkan LID → nomor untuk tagging (sub-topik C)
-- [ ] Implement tagging via mentions array di sendWA
+- [x] Riset & pecahkan LID → nomor untuk tagging (sub-topik C)
+- [x] Implement tagging via mentions array di sendWA
 
 ---
 
@@ -385,10 +385,39 @@ risiko (yang besar/berisiko di belakang). Mulai konservatif, tune live.
 - Verifikasi: `node -c server.js` PASS; full test suite 80/80 pass.
 - Dependency: none teknis, tapi enrich Fase 3 (roster awareness) & WAJIB buat Fase 6.
 
-## Fase 6 — Tagging beneran 🟠
-- sendWA pakai mentions array (format dobel: @nomor di teks + nomor@c.us di array).
-- Logic tag-when-relevant (proaktif), larangan @all, hormatin cooldown.
-- Test: Bubu tag seseorang → notif beneran nyala (bukan teks doang).
+## Fase 6 — Tagging beneran ✅ SELESAI
+- [x] `modules/mentionHelper.js`: modul baru dengan pure functions untuk mention pipeline.
+  - `phoneMentionable(participantId)`: cek apakah ID bisa di-mention. `@c.us` dan
+    `@s.whatsapp.net` → return `{ phone, jid }`. `@lid` → return null (belum mentionable).
+  - `extractMentionIntents(text, participants)`: cari pola `@NamaOrang` atau `@628xxx`
+    di teks AI output, match case-insensitive terhadap roster (full name, first name,
+    phone number). Skip `@all`/`@everyone`/`@semua`. Deduplicate per participant ID.
+  - `formatMentionedReply(text, intents)`: replace `@NamaOrang` dengan `@628xxx` di teks,
+    build mentions array `["628xxx@c.us"]`. Skip `@lid` participants (teks tetap, tanpa notif).
+  - `guardMentions(mentions, max=5)`: cap jumlah mentions, strip `"all"`/`"everyone"`.
+- [x] `server.js`: `sendWA(text, chatId, mentions)` sekarang menerima parameter opsional
+  `mentions` (array string). Kalau non-empty, dikirim di body POST `/api/sendText`.
+  Mentions di-guard via `guardMentions` sebelum dikirim.
+- [x] `server.js`: mention pipeline di `processIncomingPayload`:
+  - Setelah reply dihasilkan, kalau group chat + roster tersedia:
+    `extractMentionIntents` → `formatMentionedReply` → `sendWA(text, chatId, mentions)`.
+  - Mention cooldown: `mentionCooldownMap` per-group, 60 detik. Kalau cooldown aktif,
+    reply tetap dikirim tanpa mentions (teks @nama tetap, tapi tanpa notif WhatsApp).
+- [x] `server.js`: `rosterSummary` diperkaya dengan nama anggota (max 20) untuk
+  konteks AI: `"8 anggota (Andre, Rina, Budi, ...)"`.
+- [x] `modules/aiAdvanced.js`: `buildDynamicAwarenessContext` sekarang menyertakan
+  instruksi tagging: "Kalau perlu nge-tag seseorang, tulis @NamaOrang di pesanmu.
+  Jangan tag semua orang (@all). Tag HANYA kalau relevan." Tetap framing LATAR BELAKANG.
+- [x] `test/mentionHelper.test.js`: 22 unit test TDD (RED→GREEN):
+  - 4 test `phoneMentionable` (@c.us, @lid, null, @s.whatsapp.net)
+  - 10 test `extractMentionIntents` (by name, case-insensitive, first name, phone,
+    multiple, @all/@everyone guard, no match, unknown, empty roster, dedup)
+  - 4 test `formatMentionedReply` (replace+array, multiple, @lid skip, empty)
+  - 4 test `guardMentions` (cap, strip all, null, default max)
+- Catatan LID: participants dengan ID `@lid` TIDAK bisa di-mention via WAHA. Modul
+  handle ini defensif — teks @nama tetap muncul, tapi tanpa notif WhatsApp. Resolusi
+  LID→nomor asli tergantung data real dari endpoint WAHA.
+- Verifikasi: `node -c server.js` PASS; full test suite 102/102 pass.
 - Dependency: Fase 5.
 
 ## Fase 7 — Proaktif + guardrail (behavior terbesar, paling berisiko) 🔴
