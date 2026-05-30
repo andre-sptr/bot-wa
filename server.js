@@ -27,6 +27,11 @@ const { createDebugStore, previewText, safeError } = require('./modules/webhookD
 const { parseBubuReply } = require('./modules/reasoning');
 const { buildBubuPersona } = require('./modules/bubuPersona');
 const { buildSystemBlocks } = require('./modules/systemBlocks');
+const {
+    createGroupRosterClient,
+    fetchAndCacheRoster,
+    loadRoster,
+} = require('./modules/groupRoster');
 
 const app = express();
 app.use(express.json());
@@ -193,6 +198,13 @@ const makeAskAI = (chatId, senderName) => async (systemPrompt, userMessage, useC
 // 5. KIRIM WA + track sent message IDs for reply detection
 // ==========================================
 const botTriggerState = createBotTriggerState({ botPhone: BOT_PHONE, botLid: BOT_LID });
+
+const groupRosterClient = (WAHA_URL && WAHA_SESSION) ? createGroupRosterClient({
+    wahaUrl: WAHA_URL,
+    session: WAHA_SESSION,
+    apiKey: WAHA_API_KEY || '',
+    httpGet: (url, opts) => axios.get(url, opts),
+}) : null;
 
 const summarizeBotState = () => ({
     botIdentifiers: [...botTriggerState.botIdentifiers],
@@ -445,6 +457,15 @@ const processCommand = async (msg, chatId, askAI) => {
             return `Riwayat chat Bubu sudah di-reset! Bubu siap ngobrol topik baru`;
         }
 
+        case '/refresh-members': {
+            if (!chatId.endsWith('@g.us')) return 'Command ini cuma bisa dipakai di grup.';
+            if (!groupRosterClient) return 'WAHA belum dikonfigurasi.';
+            const roster = await fetchAndCacheRoster({ client: groupRosterClient, groupId: chatId });
+            if (!roster) return 'Gagal mengambil daftar anggota grup. Coba lagi nanti.';
+            const adminCount = roster.participants.filter(p => p.role === 'admin' || p.role === 'superadmin').length;
+            return `✅ Roster diupdate: ${roster.participants.length} anggota (${adminCount} admin).`;
+        }
+
         case '/help':
             return `*Daftar Command ${getActivePersonaName()}*\n\n` +
                 `*/harga [koin]* — Harga crypto\n` +
@@ -457,7 +478,8 @@ const processCommand = async (msg, chatId, askAI) => {
                 `*/server* — Monitor server\n` +
                 `*/rangkum* — Rangkum percakapan\n` +
                 `*/stats* — Statistik chat\n` +
-                `*/reset* — Reset riwayat chat\n\n` +
+                `*/reset* — Reset riwayat chat\n` +
+                `*/refresh-members* — Update roster anggota grup\n\n` +
                 `_Panggil "Bubu", reply pesan Bubu, atau tag @Bubu untuk ngobrol!_`;
 
         default:
@@ -569,6 +591,14 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
     const senderJid = isGroup ? getPayloadSenderId(payload, chatId) : chatId;
     const senderName = _data.notifyName || payload.notifyName || senderJid.split('@')[0];
     const chatContext = buildRuntimeChatContext({ chatId, senderJid, payload });
+
+    // Enrich with roster summary for group chats
+    if (isGroup) {
+        const roster = loadRoster(chatId);
+        if (roster && roster.participants) {
+            chatContext.rosterSummary = `${roster.participants.length} anggota`;
+        }
+    }
 
     // === Trigger detection ===
     const learnedFromIncoming = learnBotMentionFromIncoming(botTriggerState, payload);

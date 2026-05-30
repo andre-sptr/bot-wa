@@ -86,7 +86,7 @@ const compactQuotedText = (text = '', maxLength = 500) => {
     return `${normalized.slice(0, maxLength - 1)}…`;
 };
 
-const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJid, chatId, quotedMessage } = {}) => {
+const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJid, chatId, quotedMessage, rosterSummary } = {}) => {
     const lines = [
         'Konteks percakapan saat ini (LATAR BELAKANG, bukan buat diumumin):',
         '- Pakai ini untuk memahami situasi, tone, dan audiens.',
@@ -99,6 +99,7 @@ const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJi
     if (senderName) lines.push(`- Pengirim: ${senderName}.`);
     if (senderJid) lines.push(`- ID pengirim: ${senderJid}.`);
     if (chatId) lines.push(`- ID chat: ${chatId}.`);
+    if (rosterSummary) lines.push(`- Anggota grup: ${rosterSummary}.`);
     if (quotedMessage?.text) {
         const author = quotedMessage.author ? ` dari ${quotedMessage.author}` : '';
         const owner = quotedMessage.fromBot ? ' (pesan Bubu)' : '';
