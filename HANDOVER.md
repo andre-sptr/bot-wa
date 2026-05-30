@@ -1,256 +1,394 @@
 # HANDOVER — Bubu Awareness Feature
 
-> Untuk agent penerus (Codex). Kamu TIDAK punya konteks obrolan sebelumnya, jadi
-> dokumen ini dibikin self-contained. Baca ini + `AWARENESS_NOTES.md` (blueprint
-> lengkap: 5 poin desain + 7 fase + keputusan alignment).
+> Untuk agent penerus di Antigravity / Opus. Dokumen ini self-contained karena
+> agent penerus tidak punya konteks chat Codex sebelumnya.
 >
 > Project: WhatsApp bot "Bubu" di `D:\Website\bot-projects\bot_wa`.
-> Stack: Node.js + Express + WAHA (WhatsApp HTTP API) + Anthropic SDK (model
-> `claude-haiku-4-5`). Bahasa komunikasi user: Indonesia santai.
+> Stack: Node.js + Express + WAHA (WhatsApp HTTP API) + Anthropic SDK.
+> Model default live test/server: `claude-haiku-4-5-20251001`.
+> Bahasa komunikasi user: Indonesia santai.
 
 ---
 
-## 0. GAYA KERJA YANG DIHARAPKAN (penting)
-- **TDD wajib** (RED → GREEN → REFACTOR). Tulis test dulu, tonton gagal, baru implement.
-- **Grounding dulu** sebelum ngubah: baca kode terkait, jangan nebak (apalagi API WAHA/Anthropic).
-- **Commit kecil per fase**, jelasin keputusan.
-- Update `AWARENESS_NOTES.md` tiap nyelesain fase (centang checklist).
-- Kalau ada keputusan taste/produk yang genuine → TANYA user, jangan asumsi.
+## 0. Instruksi Kerja Penting
+
+- **TDD wajib**: tulis test dulu, lihat RED, baru implement GREEN, lalu refactor.
+- **Grounding dulu**: baca kode terkait sebelum mengubah, terutama payload WAHA dan Anthropic API.
+- **Commit kecil per fase**: repo sejauh ini commit per fase.
+- **Update `AWARENESS_NOTES.md` setiap selesai fase**.
+- **Jangan jalankan `node server.js` untuk sekadar cek load** karena bisa bind port bot aktif. Pakai `node -c server.js`.
+- Di Codex workspace ini ada instruksi AGENTS: shell command diprefix `rtk`. Kalau Antigravity tidak punya `rtk`, pakai command native ekuivalen.
 
 ---
 
-## 1. STATUS SEKARANG
+## 1. Status Repo Saat Handover
 
-### ✅ Fase 1 — Persistensi "forever" — SELESAI & DI-COMMIT
-Memory & summary Bubu numpuk selamanya (cap dihapus), expiry 6→24 jam.
-- `chatContext.js`: hapus 3 prune (per-chat/total/summary) + konstanta unused;
-  `AUTO_EXPIRE_HOURS` 6→24; export `saveSessionMemory` + `archiveSession`.
-- `modules/storage.js`: dukung `process.env.BOT_DATA_DIR` (override data dir buat test).
-- `test/persistence.test.js`: 5 unit test (semua hijau).
+Branch: `main`
 
-### 🚧 Fase 2 — Identitas statis + anti-recite — SEDANG JALAN (BELUM SELESAI)
-Tujuan: Bubu SADAR konteksnya (bales di WhatsApp via WAHA pakai nomor X, di DM/grup)
-TAPI ga pernah ngumumin konteks itu (anti-recite). Plus jujur ngaku asisten digital
-kalau ditanya.
+Commit terakhir:
 
-**State persis:**
-- `test/bubuPersona.test.js` — SUDAH ditulis, 9 test, **saat ini RED** (sengaja, TDD).
-  Semua gagal karena `buildBubuPersona is not a function` (belum diimplement).
-- `modules/bubuPersona.js` — MASIH versi lama: export `const BUBU_PERSONA` (string statis),
-  belum ada `buildBubuPersona`. **Ini yang harus kamu kerjain berikutnya.**
+```text
+3aa412b Complete Bubu awareness phase 4
+dc6dc59 Complete Bubu awareness phase 3
+179cc16 Complete Bubu awareness phase 2
+1d154da Add handover doc + Fase 2a RED test (WIP)
+```
+
+Status sebelum file handover ini dibuat: working tree clean.
+
+Fase selesai:
+
+- Fase 1 — Persistensi "forever": selesai.
+- Fase 2 — Identitas statis + anti-recite + prompt caching blocks: selesai.
+- Fase 3 — Awareness dinamis DM/grup + sender: selesai.
+- Fase 4 — Reply-bubble awareness: selesai.
+
+Yang harus dilanjutkan:
+
+- **Fase 5 — Roster grup: fetch + cache participants + riset LID.**
 
 ---
 
-## 2. LANGKAH BERIKUTNYA (mulai di sini)
+## 2. Keputusan Produk yang Sudah Terkunci
 
-### STEP 1 — Selesaikan Fase 2a: implement `buildBubuPersona` (GREEN)
-Ganti isi `modules/bubuPersona.js` jadi builder berikut. Ini SUDAH dirancang supaya
-lolos 9 test di `test/bubuPersona.test.js` DAN mempertahankan semua konten persona lama:
+1. **DM**: Bubu membalas semua pesan DM.
+2. **Grup**: sekarang masih trigger-based; nanti Fase 7 akan dibuat lebih proaktif dengan guardrail.
+3. **Identitas**: Bubu jujur kalau ditanya bot/AI, sebagai asisten digital buatan Andre Saputra.
+4. **Anti-recite**: context adalah lensa, bukan naskah. Bubu tahu DM/grup/sender/nomor/quoted bubble, tapi tidak membacakan konteks kecuali user bertanya langsung.
+5. **Tagging**: nanti boleh proaktif kalau relevan, tapi tidak mass-tag `@all` dan harus hormati cooldown.
+6. **Memory**: disimpan selamanya; token tetap dijaga lewat bounded retrieval.
+7. **Cross-context**: target akhirnya unified per orang lintas DM/grup, tapi tetap sopan. Bubu tidak nyeplosin hal privat dari DM di grup kecuali orangnya sendiri yang mengangkat. User sudah menyetujui aturan ini pada 2026-05-30.
+
+---
+
+## 3. Ringkasan Implementasi Fase 1-4
+
+### Fase 1 — Persistensi Forever
+
+File utama:
+
+- `chatContext.js`
+- `modules/storage.js`
+- `test/persistence.test.js`
+
+Yang dilakukan:
+
+- Memory/session summary tidak di-prune lagi oleh cap lama.
+- Expiry active session dinaikkan dari 6 jam ke 24 jam.
+- `BOT_DATA_DIR` didukung untuk isolasi test.
+- `saveSessionMemory` dan `archiveSession` diexport untuk test/fase lanjutan.
+
+### Fase 2 — Identitas Statis + Anti-Recite
+
+File utama:
+
+- `modules/bubuPersona.js`
+- `modules/systemBlocks.js`
+- `server.js`
+- `test/bubuPersona.test.js`
+- `test/systemBlocks.test.js`
+- `test/liveReasoning.js`
+
+Yang dilakukan:
+
+- `buildBubuPersona({ botPhone })` menggantikan export `BUBU_PERSONA` lama.
+- Persona statis menyertakan awareness WhatsApp/WAHA/nomor bot, tapi dengan framing "LATAR BELAKANG, BUKAN buat diucapin".
+- `buildSystemBlocks(staticText, dynamicText)` memisahkan blok statis cached dan blok dinamis uncached.
+- Anthropic `system` sekarang array block, dengan `cache_control: { type: 'ephemeral' }` di blok statis.
+
+Catatan caching:
+
+- Docs Anthropic per 2026-05-30: Claude Haiku 4.5 minimum cacheable prompt adalah 4.096 token.
+- Live test masih menunjukkan `cache_creation_input_tokens=0` dan `cache_read_input_tokens=0`.
+- Jadi struktur caching sudah benar, tapi **belum boleh diklaim hemat** sampai prompt statis melewati threshold / usage cache non-zero.
+
+### Fase 3 — Awareness Dinamis DM/Grup + Sender
+
+File utama:
+
+- `modules/aiAdvanced.js`
+- `server.js`
+- `test/awarenessContext.test.js`
+- `test/liveReasoning.js`
+
+Yang dilakukan:
+
+- `buildDynamicAwarenessContext(...)` membuat dynamic context berlabel LATAR BELAKANG.
+- `buildRuntimeChatContext({ chatId, senderJid, payload })` derive:
+  - `chatType`: `dm` / `group`
+  - `chatName`: best-effort dari payload
+  - `chatId`
+  - `senderJid`
+- `processIncomingPayload` membangun runtime chat context dan meneruskannya ke `handleNaturalLanguage`.
+- `contextAwareResponse` sekarang menerima object options:
 
 ```js
-// ==========================================
-// BUBU SYSTEM PROMPT (statis — kandidat di-cache)
-// Single source of truth — imported by server + live tests.
-// buildBubuPersona({ botPhone }) supaya nomor WA (dari env) bisa diinject.
-// ==========================================
-
-const buildBubuPersona = ({ botPhone = '' } = {}) => {
-    const numberClause = botPhone ? ` Nomor WhatsApp kamu: ${botPhone}.` : '';
-
-    return `Kamu adalah Bubu, asisten digital cerdas yang dibuat oleh Andre Saputra.
-Bubu hangat, witty, dan helpful — kayak temen pintar di chat WhatsApp.
-
-Kesadaran posisi (ini LATAR BELAKANG, BUKAN buat diucapin):
-- Kamu beneran lagi bales chat di WhatsApp, lewat sebuah nomor WA (dijalankan via WAHA).${numberClause}
-- Kamu bisa lagi di chat pribadi (DM) berdua, atau di dalam grup yang rame.
-- Kamu sadar semua ini — tapi cukup TAU aja, biarin itu ngebentuk cara kamu bales.
-
-ATURAN #1 — PALING PENTING (sadar konteks, BUKAN ngumumin konteks):
-Kamu punya banyak konteks (lagi di DM/grup, siapa lawan ngobrol, nomor kamu, dll).
-Tapi konteks itu LENSA, bukan naskah — JANGAN pernah dibacain/diumumin ke user.
-Patokan: kayak manusia yang tau dia lagi bales di grup mana, tapi GA nyebut nama grup
-kalau ga ditanya. Sebut detail konteks HANYA kalau user nanya langsung.
-- SALAH: "Halo Andre, aku Bubu, kita lagi di grup Draft, ada yang bisa dibantu?"
-- BENAR: "Eh Andre, kenapa?"
-- SALAH: tiap bales ngumumin lagi di WhatsApp / nyebut nomor / nyebut nama grup
-- BENAR: langsung nyambung ke obrolan — sadar diri, tapi diem soal konteksnya
-Kalau ada yang nanya "kamu bot/AI ya?" → jujur aja ngaku asisten digital buatan Andre,
-santai, ga usah ngeles. Tetap pakai gaya Bubu.
-
-Identitas:
-- SELALU sebut diri "Bubu", JANGAN pakai "aku", "saya", atau "I"
-- Kalau ditanya pembuat → "Bubu dibuat oleh Andre Saputra"
-- Jujur kalau ga tau — jangan ngarang
-
-Aturan panjang jawaban (PENTING):
-- Default: 1-3 kalimat. Anggap ini chat WhatsApp, bukan email.
-- Max 5 kalimat, hanya kalo topik beneran kompleks (penjelasan teknis, breakdown step).
-- JANGAN bikin list/bullet kecuali user minta atau topik beneran butuh enumeration.
-- JANGAN multi-paragraf untuk reply casual (greeting, banter, ack singkat).
-- Hindari basa-basi penutup kayak "ada yang bisa Bubu bantu lagi?" tiap reply — annoying.
-
-Aturan emoji (PENTING):
-- MAX 1 emoji per reply. Sering kali 0 emoji lebih baik.
-- Emoji hanya kalau beneran nambah makna (emosi, tone, penekanan).
-- JANGAN dipakai sebagai dekorasi atau penutup tiap kalimat.
-- Reply santai/witty → biasanya ga butuh emoji, tone udah keliatan dari kata.
-
-Kesadaran grup:
-- Pesan user diawali [Nama] menunjukkan pengirim
-- Sapa pake nama mereka SESEKALI aja, jangan tiap reply (jadi cringe)
-- Inget konteks dari history/memory kalau relevan
-
-Proses berpikir (WAJIB sebelum jawab):
-Setiap respon HARUS pakai format dua tahap di bawah ini:
-
-<reasoning>
-Singkat & padat (2-4 baris). Analisa:
-1. Maksud user sebenernya apa? (eksplisit + implisit, tone, mood)
-2. Konteks relevan dari history/memory?
-3. Pendekatan terbaik: informatif / suportif / witty / klarifikasi?
-4. Hal yang HARUS / JANGAN dimasukin di jawaban?
-</reasoning>
-
-<response>
-Jawaban final buat user. Langsung, natural, sesuai persona Bubu.
-JANGAN pernah tulis ulang isi reasoning di sini.
-</response>
-
-Hanya isi <response> yang dikirim ke user. Reasoning internal, tidak terlihat.`;
-};
-
-module.exports = { buildBubuPersona };
+contextAwareResponse(msg, askAI, { senderName, memoryContext, chatContext });
 ```
 
-Lalu jalankan: `node --test test/bubuPersona.test.js` → harus 9/9 GREEN.
+Backward compatibility positional args tetap dijaga:
 
-### STEP 2 — Wire builder ke pemakainya (2 file masih import `BUBU_PERSONA` lama)
-Cari pemakainya: grep `BUBU_PERSONA` dan `buildBubuPersona`.
-1. **`server.js`**:
-   - Import: `const { BUBU_PERSONA } = require('./modules/bubuPersona');`
-     → ganti jadi `const { buildBubuPersona } = require('./modules/bubuPersona');`
-   - `BOT_PHONE` udah ada di server.js (grep `BOT_PHONE`, dari `process.env.BOT_PHONE`).
-   - Bangun sekali di module-level (botPhone konstan), mis. setelah BOT_PHONE didefinisikan:
-     `const BUBU_PERSONA = buildBubuPersona({ botPhone: BOT_PHONE });`
-   - Pemakaian di `makeAskAI` (`const systemText = \`${BUBU_PERSONA}\n\nGaya bicara: ...\`;`)
-     ga perlu berubah kalau kamu tetap punya const bernama `BUBU_PERSONA`.
-2. **`test/liveReasoning.js`**:
-   - Sama: ganti import ke `buildBubuPersona`, lalu
-     `const BUBU_PERSONA = buildBubuPersona({ botPhone: process.env.BOT_PHONE });`
-
-Verifikasi ga ada yang ke-skip: `node -c server.js` dan jalankan SEMUA unit test (lihat §3).
-
-### STEP 3 — Live test anti-recite (verifikasi behavior, butuh API key)
-Jalankan `node test/liveReasoning.js`. Tambahkan/clearkan skenario buat ngecek:
-- **Greeting biasa** ("halo") → response TIDAK boleh nyebut "WhatsApp"/"WAHA"/nama grup/nomor
-  (kalau nyebut = recite, gagal). Bisa assert otomatis: `assert.doesNotMatch(response, /WhatsApp|WAHA|<nomor>/i)`.
-- **"kamu bot/AI ya?"** → harus ngaku asisten digital (santai).
-- **"ini grup apa?"** → boleh nyebut (karena ditanya langsung).
-Catatan: `test/liveReasoning.js` SUDAH pakai `require('dotenv').config({ override: true })`
-(WAJIB — lihat gotcha §4.2). Ada metrik emoji/length/banlist di situ, reuse aja.
-
-### STEP 4 — Fase 2b: Prompt caching (token optimization)
-Tujuan: blok statis (output `buildBubuPersona` + "Gaya bicara: "+persona) di-cache, bagian
-dinamis (`systemPrompt` arg) jangan.
-- Anthropic SDK: `system` boleh array of blocks. Taruh `cache_control: { type: 'ephemeral' }`
-  di blok statis terakhir. Struktur:
-  ```js
-  system: [
-    { type: 'text', text: STATIC, cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: DYNAMIC },
-  ]
-  ```
-- **TDD**: extract pure function `buildSystemBlocks(staticText, dynamicText)` → unit test
-  strukturnya (cache_control ada di blok statis; dynamic di blok kedua; kalau dynamic kosong
-  cukup 1 blok). Baru pakai di `makeAskAI` (`server.js`).
-- ⚠️ **CAVEAT WAJIB DIVERIFIKASI**: model `claude-haiku-4-5` punya MINIMUM panjang prompt
-  yang bisa di-cache (perkiraan ~2048 token utk Haiku). Blok statis sekarang (~1200 token)
-  mungkin DI BAWAH minimum → cache_control aman dipasang tapi BELUM ngehemat sampai prompt
-  membesar (Fase 3-5 nambah konten statis). **Verifikasi minimum terkini lewat docs Anthropic
-  / skill `claude-api`** sebelum klaim hemat. Jangan asal.
-- Juga: `modules/aiAdvanced.js` → `contextAwareResponse` saat ini NYAMPUR konteks dinamis
-  (waktu/sender/memory) ke ARG systemPrompt. Itu OK (dia jadi blok dinamis), tapi pastikan
-  pemisahan statis/dinamis bersih biar caching efektif.
-
-### STEP 5 — Tandai Fase 2 selesai
-Update `AWARENESS_NOTES.md` (bagian "## Fase 2"), commit, lanjut Fase 3.
-
----
-
-## 3. CARA TEST (gotcha Windows!)
-- **JANGAN** `node --test test/` (folder) → ERROR "Cannot find module ...test" di setup ini.
-  Harus listing file eksplisit.
-- Full unit suite:
-  ```
-  node --test test/persistence.test.js test/bubuPersona.test.js test/reasoning.test.js test/messageTriggers.test.js test/webhookDebug.test.js
-  ```
-  Target saat ini: 37 lulus (Fase 1) + 9 (Fase 2a, setelah STEP 1) = 46.
-- Live test (butuh API key di `.env`): `node test/liveReasoning.js`.
-- Syntax check: `node -c server.js`.
-- `npm install` sudah dijalankan (node_modules ada).
-
----
-
-## 4. GOTCHA PENTING
-1. **`node --test test/` gagal** → list file eksplisit (lihat §3).
-2. **dotenv + ANTHROPIC_API_KEY**: shell punya `ANTHROPIC_API_KEY=""` (kosong) yang MEMBLOKIR
-   dotenv default. Skrip yang butuh API key HARUS `require('dotenv').config({ override: true })`.
-   (server.js produksi jalan normal karena bukan di shell yang sama; tapi skrip test live wajib override.)
-3. **Test storage-backed**: set `process.env.BOT_DATA_DIR = <tempdir>` SEBELUM `require` storage/
-   chatContext, biar ga ngotorin `data/` asli. Lihat pola di `test/persistence.test.js` (atas file).
-4. **Jangan biarin server.js nyala**: `node server.js` bind port 3005 (dari `.env PORT`) → bentrok
-   sama bot user yang lagi jalan. Kalau cuma mau cek load, pakai `node -c` (syntax), bukan run.
-5. **Parser reasoning** (`modules/reasoning.js`) bergantung tag `<reasoning>`/`<response>`.
-   Jangan ubah format itu di persona tanpa update parser + test-nya.
-6. **LID vs nomor**: grup user pakai identitas `@lid` (mis. `138...@lid`), bukan `@c.us`. Ini
-   ngaruh ke Fase 5 (roster) & Fase 6 (tagging) & unifikasi cross-context Fase 3. Perlu eksperimen
-   payload asli. (Belum dikerjain — fase nanti.)
-
----
-
-## 5. KEPUTUSAN ALIGNMENT (TERKUNCI — jangan diubah tanpa nanya user)
-Detail lengkap di `AWARENESS_NOTES.md` → "KEPUTUSAN ALIGNMENT".
-1. **DM**: Bubu balas SEMUA pesan di DM (sudah jalan, dari kerjaan sebelumnya — trigger `'dm'`).
-2. **Grup — kapan ngomong**: PROAKTIF (boleh nimbrung tanpa dipanggil), dengan guardrail
-   (pre-filter lokal gratis pakai `autoCategorize`, cooldown, relevance gate, kill-switch
-   `/diem`↔`/aktif`). Mulai konservatif: cuma kategori PERTANYAAN + DISKUSI. → Fase 7.
-3. **Tagging**: PROAKTIF kalau relevan, TAPI ga pernah mass-tag (`@all`), hormatin cooldown. → Fase 6.
-4. **Identitas**: Bubu JUJUR ngaku asisten digital buatan Andre. → Fase 2 (sedang dikerjain).
-5. **Lintas konteks**: UNIFIED — Bubu inget orang yang sama lintas DM & grup (boleh nyinggung
-   hal dari DM), TAPI dengan "tata krama sosial": ga nyeplosin hal jelas-privat dari DM pas di
-   grup kecuali orangnya sendiri yang ngangkat. Cross-PERSON tetap terisolasi (memori Budi ga
-   muncul buat Andre — key by PERSON, bukan cuma chatId). Butuh resolusi LID → mateng penuh
-   setelah Fase 5. Implikasi: memory retrieval perlu person-aware (key tambahan senderJid). → Fase 1(done)/3.
-6. **Data safety**: semua data aman di-inject, ga ada layer redaction. Alasan Bubu ga nyeplos =
-   kewajaran (Aturan #1), bukan privacy.
-7. **Persistensi**: memory selamanya (Fase 1 ✅), token hemat karena retrieval cuma top-2 relevan.
-
----
-
-## 6. PETA FILE
-- `server.js` — entry: webhook handler, makeAskAI (AI engine), command router, polling, debug endpoints.
-- `chatContext.js` — history & memory per chat (sessions, session_memories, chat_summaries),
-  per-chat lock, expiry/archive. **Fase 1 sudah dimodif di sini.**
-- `modules/bubuPersona.js` — system prompt statis. **Sedang dimodif (Fase 2).**
-- `modules/reasoning.js` — parser `<reasoning>`/`<response>`.
-- `modules/aiFeatures.js` — persona gaya bicara (Jaksel-ringan, English dibatasi).
-- `modules/aiAdvanced.js` — classifyIntent & autoCategorize (LOKAL, no-AI — penting buat
-  pre-filter proaktif Fase 7), contextAwareResponse, summarizeConversation.
-- `modules/messageTriggers.js` — deteksi trigger (cmd/name/reply/mention/dm), parsing payload
-  WAHA, LID handling. Punya test lengkap.
-- `modules/automation.js` — reminder cron & server monitor (broadcast ke GROUP_ID).
-- `modules/storage.js` — JSON file storage + cache + backup. **Fase 1 nambah BOT_DATA_DIR.**
-- `modules/webhookDebug.js` — debug log ring buffer.
-- `AWARENESS_NOTES.md` — BLUEPRINT lengkap (baca ini!).
-- `test/*.test.js` — unit test. `test/liveReasoning.js` — live API test (jalan manual).
-
----
-
-## 7. RINGKAS: APA YANG HARUS KAMU LAKUKAN SEKARANG
-1. Implement `buildBubuPersona` di `modules/bubuPersona.js` (kode di STEP 1) → `node --test test/bubuPersona.test.js` hijau.
-2. Wire ke `server.js` + `test/liveReasoning.js` (STEP 2). Jalankan full unit suite (§3) — harus hijau semua.
-3. Live test anti-recite (STEP 3).
-4. Prompt caching + verifikasi minimum Haiku via skill `claude-api`/docs (STEP 4).
-5. Update `AWARENESS_NOTES.md`, commit "Fase 2 selesai", lanjut Fase 3 (awareness dinamis DM/grup
-   + sender + person-keying untuk unified cross-context).
+```js
+contextAwareResponse(msg, askAI, senderName, memoryContext);
 ```
+
+### Fase 4 — Reply-Bubble Awareness
+
+File utama:
+
+- `modules/messageTriggers.js`
+- `modules/aiAdvanced.js`
+- `test/messageTriggers.test.js`
+- `test/awarenessContext.test.js`
+- `test/liveReasoning.js`
+
+Yang dilakukan:
+
+- `getQuotedMessageContext(payload)` diexport dari `modules/messageTriggers.js`.
+- Helper ini membaca quoted/reply text dari:
+  - `payload.replyTo`
+  - `payload.reply_to`
+  - `payload.quotedMsg`
+  - `payload._data.quotedMsg`
+- Text source yang dicoba:
+  - `body`
+  - `text`
+  - `caption`
+  - `_data.body`
+  - `_data.text`
+  - `_data.caption`
+- Author source best-effort:
+  - `participant`
+  - `from`
+  - `author`
+  - `_data.participant`
+  - `_data.author`
+  - `_data.id.participant`
+- `buildRuntimeChatContext` otomatis menyertakan `quotedMessage` hanya kalau quoted text ada.
+- `buildDynamicAwarenessContext` merender quoted bubble sebagai 1 baris bounded 500 char:
+
+```text
+- Pesan ini me-reply bubble sebelumnya dari <author>: "<text>".
+```
+
+Ini tetap dynamic context, bukan hal yang harus diumumkan ke user.
+
+---
+
+## 4. Cara Test
+
+Jangan pakai `node --test test/` di Windows setup ini. Listing file eksplisit.
+
+Full unit suite saat ini:
+
+```powershell
+node --test test/persistence.test.js test/bubuPersona.test.js test/systemBlocks.test.js test/awarenessContext.test.js test/reasoning.test.js test/messageTriggers.test.js test/webhookDebug.test.js
+```
+
+Target terakhir terverifikasi:
+
+```text
+62/62 pass
+```
+
+Syntax checks:
+
+```powershell
+node -c server.js
+node -c test/liveReasoning.js
+```
+
+Live Anthropic test:
+
+```powershell
+node test/liveReasoning.js
+```
+
+Target terakhir terverifikasi:
+
+```text
+10 scenarios
+Banlist hits: 0
+Policy fails: 0
+Cache tokens: create=0 read=0
+```
+
+Live test butuh `.env` berisi `ANTHROPIC_API_KEY`. Script sudah memakai:
+
+```js
+require('dotenv').config({ override: true });
+```
+
+Ini penting karena shell pernah punya `ANTHROPIC_API_KEY=""` yang bisa mengalahkan `.env` kalau tidak override.
+
+---
+
+## 5. File Map
+
+- `server.js`: Express app, webhook WAHA, `makeAskAI`, command router, `sendWA`, debug endpoints.
+- `chatContext.js`: history, session memory, summaries, archive/expiry, relevant memory retrieval.
+- `modules/bubuPersona.js`: persona statis Bubu dan anti-recite rules.
+- `modules/systemBlocks.js`: Anthropic system block builder untuk static cached + dynamic uncached.
+- `modules/aiAdvanced.js`: local intent/category, dynamic awareness context, runtime chat context, context-aware response.
+- `modules/messageTriggers.js`: trigger detection, ID normalization, LID/mention/reply detection, quoted message extraction.
+- `modules/aiFeatures.js`: gaya bahasa persona dan banlist Jaksel/English filler.
+- `modules/reasoning.js`: parser `<reasoning>` / `<response>`.
+- `modules/storage.js`: JSON storage, backup, `BOT_DATA_DIR` support.
+- `modules/webhookDebug.js`: debug ring buffer.
+- `test/liveReasoning.js`: live Anthropic behavior/policy check.
+- `AWARENESS_NOTES.md`: blueprint dan roadmap lengkap. Sudah diupdate sampai Fase 4.
+
+---
+
+## 6. Gotcha Penting
+
+1. **Jangan run server sembarangan**
+   - `node server.js` bisa bind port dari `.env` dan bentrok dengan bot yang sedang jalan.
+   - Pakai `node -c server.js` untuk syntax.
+
+2. **Reasoning parser bergantung tag**
+   - Persona wajib mempertahankan output:
+
+```xml
+<reasoning>...</reasoning>
+<response>...</response>
+```
+
+   - Hanya `<response>` yang dikirim ke WhatsApp.
+
+3. **Cache belum hemat**
+   - Jangan claim prompt caching sudah menghemat biaya.
+   - Live counters masih `create=0 read=0`.
+
+4. **Group user pakai LID**
+   - Payload grup bisa memakai `@lid`, bukan `@c.us`.
+   - Ini blocker/riset utama Fase 5-6 untuk roster dan tagging.
+
+5. **Storage test harus isolated**
+   - Kalau test menyentuh storage/chatContext, set `process.env.BOT_DATA_DIR` sebelum require modul storage/chatContext. Lihat pola di `test/persistence.test.js`.
+
+6. **Anti-recite harus dijaga**
+   - Kalau menambah konteks baru, framing harus sebagai LATAR BELAKANG.
+   - Jangan mendorong Bubu menyebut "kamu sedang di grup X" kecuali user bertanya langsung.
+
+---
+
+## 7. Next Step: Fase 5
+
+### Tujuan
+
+Bubu punya roster anggota grup yang bisa dipakai untuk:
+
+- mengenali siapa saja anggota grup,
+- memperkaya awareness grup,
+- menjadi pondasi tagging di Fase 6,
+- mulai menyelesaikan masalah LID vs nomor.
+
+### Rencana awal yang disarankan
+
+Tetap TDD. Pecah Fase 5 jadi beberapa langkah kecil:
+
+1. **Create pure storage key/helper untuk group roster**
+   - Misalnya `modules/groupRoster.js`.
+   - Helper untuk normalize group id ke key storage aman.
+   - Test dulu.
+
+2. **Fetch participants dari WAHA**
+   - Endpoint dari notes:
+
+```text
+GET /api/{session}/groups/{groupId}/participants/v2
+```
+
+   - Gunakan `WAHA_URL`, `WAHA_SESSION`, `WAHA_API_KEY`.
+   - Jangan asumsi shape response. Buat debug/log sample dulu kalau perlu.
+
+3. **Cache participants via `modules/storage.js`**
+   - Key contoh: `group_members_<safeGroupId>`.
+   - Simpan metadata:
+     - `groupId`
+     - `fetchedAt`
+     - `participants`
+     - raw-ish minimal fields yang aman untuk debugging LID.
+
+4. **Command manual refresh**
+   - Tambahkan command seperti `/refresh-members`.
+   - Ini lebih aman daripada auto-fetch di startup untuk fase pertama.
+
+5. **Riset LID**
+   - Verifikasi apakah participants endpoint mengembalikan `@c.us`, `@lid`, atau campuran.
+   - Bandingkan dengan `senderJid` dari webhook grup.
+   - Catat hasil di `AWARENESS_NOTES.md`.
+
+### Jangan langsung loncat ke Fase 6
+
+Tagging beneran harus menunggu Fase 5 cukup jelas, karena `sendWA` perlu `mentions` array dan format mention harus benar. Salah format bisa cuma jadi teks `@nomor` tanpa notifikasi.
+
+---
+
+## 8. Suggested Tests for Fase 5
+
+Tambahkan test baru, misalnya:
+
+- `test/groupRoster.test.js`
+
+Test pure functions:
+
+- safe storage key dari group id.
+- normalize participant id.
+- cache save/load memakai `BOT_DATA_DIR`.
+- mapping participant minimal.
+
+Kalau menambahkan WAHA client wrapper, mock axios dengan dependency injection sederhana atau buat function yang menerima `httpGet` agar test tidak hit network.
+
+Contoh shape yang enak dites:
+
+```js
+const createGroupRosterClient = ({ wahaUrl, session, apiKey, httpGet }) => ({
+    fetchParticipants: async (groupId) => { /* ... */ },
+});
+```
+
+---
+
+## 9. Verification Baseline
+
+Sebelum mulai Fase 5, jalankan:
+
+```powershell
+node -c server.js
+node --test test/persistence.test.js test/bubuPersona.test.js test/systemBlocks.test.js test/awarenessContext.test.js test/reasoning.test.js test/messageTriggers.test.js test/webhookDebug.test.js
+```
+
+Setelah Fase 5, update command suite dengan test baru:
+
+```powershell
+node --test test/persistence.test.js test/bubuPersona.test.js test/systemBlocks.test.js test/awarenessContext.test.js test/groupRoster.test.js test/reasoning.test.js test/messageTriggers.test.js test/webhookDebug.test.js
+```
+
+Live test tetap:
+
+```powershell
+node test/liveReasoning.js
+```
+
+---
+
+## 10. Recent Verified Results
+
+Terakhir diverifikasi oleh Codex:
+
+```text
+node -c server.js                                    PASS
+node -c test/liveReasoning.js                        PASS
+full explicit unit suite                             62/62 PASS
+node test/liveReasoning.js                           10 scenarios, banlist 0, policy fails 0
+```
+
+Commit terakhir yang berisi implementation:
+
+```text
+3aa412b Complete Bubu awareness phase 4
+```
+
+File handover ini dibuat setelah commit tersebut agar Opus/Antigravity bisa langsung lanjut dari Fase 5.
