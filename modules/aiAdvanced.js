@@ -104,7 +104,8 @@ const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJi
     }
     if (rosterSummary) {
         lines.push(`- Anggota grup: ${rosterSummary}.`);
-        lines.push('- Kalau perlu nge-tag seseorang, tulis @NamaOrang di pesanmu. Jangan tag semua orang (@all). Tag HANYA kalau relevan.');
+        lines.push('- Kalau perlu nge-tag seseorang, tulis @NamaOrang di pesanmu. Tag HANYA kalau relevan.');
+        lines.push('- Kalau diminta tag semua orang, tulis @all di pesanmu.');
     }
     if (quotedMessage?.text) {
         const author = quotedMessage.author ? ` dari ${quotedMessage.author}` : '';

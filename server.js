@@ -75,7 +75,7 @@ const rateLimitMap = new Map();
 const RATE_LIMIT_MS = 3000;
 
 const mentionCooldownMap = new Map();
-const MENTION_COOLDOWN_MS = 60_000; // 60s cooldown per group for mentions
+const MENTION_COOLDOWN_MS = 5_000; // 5s cooldown per group for mentions
 
 const isRateLimited = (userId) => {
     const now = Date.now();
@@ -645,6 +645,17 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
     let roster = null;
     if (isGroup) {
         roster = loadRoster(chatId);
+        // Auto-fetch roster if not cached yet (first time in this group)
+        if (!roster && groupRosterClient) {
+            try {
+                roster = await fetchAndCacheRoster({ client: groupRosterClient, groupId: chatId });
+                if (roster) {
+                    console.log(`[Roster] Auto-fetched roster for ${chatId}: ${roster.participants.length} members`);
+                }
+            } catch (e) {
+                console.error(`[Roster] Auto-fetch failed for ${chatId}:`, e?.message);
+            }
+        }
         if (roster && roster.participants) {
             const names = roster.participants
                 .filter(p => p.name)
