@@ -17,6 +17,7 @@ const storage = require('../modules/storage');
 const {
     safeGroupStorageKey,
     normalizeParticipant,
+    pickContactName,
     saveRoster,
     loadRoster,
     createGroupRosterClient,
@@ -239,4 +240,93 @@ test('fetchAndCacheRoster returns empty roster on fetch failure', async () => {
     const roster = await fetchAndCacheRoster({ client, groupId });
 
     assert.equal(roster, null);
+});
+
+// ── pickContactName (name enrichment) ────────────────────────────
+
+test('pickContactName prefers name over pushname/shortName', () => {
+    assert.equal(pickContactName({ name: 'Ardian', pushname: 'ardian', shortName: 'Ard' }), 'Ardian');
+});
+
+test('pickContactName falls back to pushname then shortName', () => {
+    assert.equal(pickContactName({ pushname: 'ardian', shortName: 'Ard' }), 'ardian');
+    assert.equal(pickContactName({ shortName: 'Ard' }), 'Ard');
+});
+
+test('pickContactName returns empty string for missing/invalid data', () => {
+    assert.equal(pickContactName(null), '');
+    assert.equal(pickContactName({}), '');
+    assert.equal(pickContactName([]), '');
+});
+
+// ── client.fetchContactName (WAHA contacts endpoint) ─────────────
+
+test('fetchContactName calls contacts endpoint with session + contactId + api key', async () => {
+    let capturedUrl = '';
+    let capturedHeaders = {};
+    const mockHttpGet = async (url, opts) => {
+        capturedUrl = url;
+        capturedHeaders = opts?.headers || {};
+        return { data: { name: 'Ardian' } };
+    };
+    const client = createGroupRosterClient({
+        wahaUrl: 'https://waha.example.com',
+        session: 'BotWA',
+        apiKey: 'key-xyz',
+        httpGet: mockHttpGet,
+    });
+
+    const name = await client.fetchContactName('6289618750563@c.us');
+
+    assert.equal(name, 'Ardian');
+    assert.ok(capturedUrl.includes('/api/contacts'));
+    assert.ok(capturedUrl.includes('session=BotWA'));
+    assert.ok(capturedUrl.includes('6289618750563'));
+    assert.equal(capturedHeaders['X-Api-Key'], 'key-xyz');
+});
+
+test('fetchContactName returns empty string on error (resilient)', async () => {
+    const client = createGroupRosterClient({
+        wahaUrl: 'https://waha.example.com',
+        session: 'S',
+        apiKey: 'k',
+        httpGet: async () => { throw new Error('contact 404'); },
+    });
+
+    const name = await client.fetchContactName('628@c.us');
+    assert.equal(name, '');
+});
+
+// ── fetchAndCacheRoster name enrichment ──────────────────────────
+
+test('fetchAndCacheRoster enriches participants with names from contacts endpoint', async () => {
+    // participants/v2 returns NO name (real WAHA behavior); contacts endpoint provides it.
+    const mockHttpGet = async (url) => {
+        if (url.includes('/contacts')) {
+            return { data: { name: 'Ardian', pushname: 'ardian' } };
+        }
+        return {
+            data: [
+                { id: '628111@c.us', role: 'admin', name: 'Bob' }, // already named → preserved
+                { id: '628222@c.us', role: 'participant' },        // no name → enriched
+            ],
+        };
+    };
+    const client = createGroupRosterClient({
+        wahaUrl: 'https://waha.example.com',
+        session: 'S',
+        apiKey: 'k',
+        httpGet: mockHttpGet,
+    });
+
+    const groupId = 'enrich-test@g.us';
+    const roster = await fetchAndCacheRoster({ client, groupId });
+
+    assert.equal(roster.participants.length, 2);
+    assert.equal(roster.participants[0].name, 'Bob');     // existing name preserved
+    assert.equal(roster.participants[1].name, 'Ardian');  // enriched from contacts
+
+    // Persisted with names
+    const fromStorage = loadRoster(groupId);
+    assert.equal(fromStorage.participants[1].name, 'Ardian');
 });

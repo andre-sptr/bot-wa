@@ -99,6 +99,9 @@ const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJi
     if (senderName) lines.push(`- Pengirim: ${senderName}.`);
     if (senderJid) lines.push(`- ID pengirim: ${senderJid}.`);
     if (chatId) lines.push(`- ID chat: ${chatId}.`);
+    if (chatType === 'group') {
+        lines.push('- Privasi: kalau ada ingatan bertanda [privat], itu dari DM pribadi orangnya. JANGAN diungkit di grup kecuali dia sendiri yang mengangkat duluan.');
+    }
     if (rosterSummary) {
         lines.push(`- Anggota grup: ${rosterSummary}.`);
         lines.push('- Kalau perlu nge-tag seseorang, tulis @NamaOrang di pesanmu. Jangan tag semua orang (@all). Tag HANYA kalau relevan.');

@@ -41,6 +41,16 @@ const normalizeParticipant = (raw) => {
     };
 };
 
+/**
+ * Pick the best display name from a WAHA contact response.
+ * participants/v2 omits names, so names come from the contacts endpoint.
+ * Prefers name → pushname → shortName.
+ */
+const pickContactName = (data) => {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return '';
+    return String(data.name || data.pushname || data.shortName || '').trim();
+};
+
 // ── Storage helpers ──────────────────────────────────────────────
 
 /**
@@ -91,6 +101,25 @@ const createGroupRosterClient = ({ wahaUrl, session, apiKey, httpGet }) => {
             const raw = Array.isArray(response.data) ? response.data : [];
             return raw.map(normalizeParticipant);
         },
+
+        /**
+         * Fetch a contact's display name from WAHA. Resilient: returns ''
+         * on any error (never throws), so roster enrichment can't crash.
+         * @param {string} contactId - e.g. '6289618750563@c.us'
+         * @returns {Promise<string>}
+         */
+        fetchContactName: async (contactId) => {
+            try {
+                const url = `${wahaUrl}/api/contacts?session=${encodeURIComponent(session)}&contactId=${encodeURIComponent(contactId)}`;
+                const response = await httpGet(url, {
+                    headers: { 'X-Api-Key': apiKey },
+                    timeout: 10000,
+                });
+                return pickContactName(response?.data);
+            } catch {
+                return '';
+            }
+        },
     };
 };
 
@@ -103,6 +132,16 @@ const createGroupRosterClient = ({ wahaUrl, session, apiKey, httpGet }) => {
 const fetchAndCacheRoster = async ({ client, groupId }) => {
     try {
         const participants = await client.fetchParticipants(groupId);
+
+        // Enrich with names: participants/v2 omits names, so fetch each member's
+        // display name from the contacts endpoint. Existing names are preserved.
+        if (typeof client.fetchContactName === 'function') {
+            await Promise.all(participants.map(async (p) => {
+                if (p.name || !p.id) return;
+                p.name = await client.fetchContactName(p.id);
+            }));
+        }
+
         return saveRoster(groupId, participants);
     } catch (err) {
         console.error(`[GroupRoster] Failed to fetch roster for ${groupId}:`, err?.message || err);
@@ -113,6 +152,7 @@ const fetchAndCacheRoster = async ({ client, groupId }) => {
 module.exports = {
     safeGroupStorageKey,
     normalizeParticipant,
+    pickContactName,
     saveRoster,
     loadRoster,
     createGroupRosterClient,

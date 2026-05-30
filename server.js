@@ -32,6 +32,7 @@ const {
     fetchAndCacheRoster,
     loadRoster,
 } = require('./modules/groupRoster');
+const { createLidResolver } = require('./modules/lidResolver');
 const {
     extractMentionIntents,
     formatMentionedReply,
@@ -146,7 +147,7 @@ const formatForWhatsApp = (text) => {
     return text.replace(/\*\*(.+?)\*\*/g, '*$1*');
 };
 
-const makeAskAI = (chatId, senderName) => async (systemPrompt, userMessage, useContext = true) => {
+const makeAskAI = (chatId, senderName, senderJid = null) => async (systemPrompt, userMessage, useContext = true) => {
     try {
         const personaExtra = getPersonaPrompt();
         const staticSystemText = `${BUBU_PERSONA}\n\nGaya bicara: ${personaExtra}`;
@@ -202,7 +203,7 @@ const makeAskAI = (chatId, senderName) => async (systemPrompt, userMessage, useC
 
         const aiReply = formatForWhatsApp(parsedResponse);
 
-        if (useContext && chatId && aiReply) addMessage(chatId, userMessage, aiReply, senderName);
+        if (useContext && chatId && aiReply) addMessage(chatId, userMessage, aiReply, senderName, senderJid);
         return aiReply;
     } catch (error) {
         console.error('Error AI:', error?.message || error);
@@ -221,6 +222,19 @@ const groupRosterClient = (WAHA_URL && WAHA_SESSION) ? createGroupRosterClient({
     apiKey: WAHA_API_KEY || '',
     httpGet: (url, opts) => axios.get(url, opts),
 }) : null;
+
+// Resolve @lid (sender grup) → @c.us (nomor kanonik) untuk unified cross-context (Gap #1).
+const lidResolver = (WAHA_URL && WAHA_SESSION) ? createLidResolver({
+    wahaUrl: WAHA_URL,
+    session: WAHA_SESSION,
+    apiKey: WAHA_API_KEY || '',
+    httpGet: (url, opts) => axios.get(url, opts),
+}) : null;
+
+const resolveCanonicalSender = async (senderJid) => {
+    if (!lidResolver || !senderJid) return senderJid || null;
+    try { return await lidResolver.canonicalId(senderJid); } catch { return senderJid; }
+};
 
 const summarizeBotState = () => ({
     botIdentifiers: [...botTriggerState.botIdentifiers],
@@ -531,7 +545,7 @@ const CATEGORY_EMOJI = {
     INFO: '', GREETING: ''
 };
 
-const handleNaturalLanguage = async (msg, chatId, senderName, askAI, chatContext) => {
+const handleNaturalLanguage = async (msg, chatId, senderName, askAI, chatContext, senderJid = null) => {
     try {
         const category = autoCategorize(msg);
         const intent = classifyIntent(msg);
@@ -541,7 +555,7 @@ const handleNaturalLanguage = async (msg, chatId, senderName, askAI, chatContext
             if (result) return result;
         }
 
-        const memoryContext = getRelevantMemory(chatId, msg);
+        const memoryContext = getRelevantMemory(chatId, msg, senderJid);
         const response = await contextAwareResponse(msg, askAI, { senderName, memoryContext, chatContext });
         if (!response) return null;
 
@@ -670,12 +684,13 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
                     markProcessedIncoming(payload);
 
                     await withChatLock(chatId, async () => {
-                        const askAI = makeAskAI(chatId, senderName);
+                        const canonicalSenderJid = await resolveCanonicalSender(senderJid);
+                        const askAI = makeAskAI(chatId, senderName, canonicalSenderJid);
 
                         // Inject proactive instruction into chatContext
                         chatContext.proactiveMode = true;
 
-                        const reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext);
+                        const reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext, canonicalSenderJid);
 
                         if (!reply || reply.includes(PROACTIVE_SKIP_MARKER)) {
                             record(`${source}-proactive-skipped`, {
@@ -748,13 +763,14 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
 
     // Process with per-chat lock to prevent race conditions
     await withChatLock(chatId, async () => {
-        const askAI = makeAskAI(chatId, senderName);
+        const canonicalSenderJid = await resolveCanonicalSender(senderJid);
+        const askAI = makeAskAI(chatId, senderName, canonicalSenderJid);
 
         let reply = null;
         if (trigger === 'cmd') {
             reply = await processCommand(msgBody, chatId, askAI);
         } else {
-            reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext);
+            reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext, canonicalSenderJid);
         }
 
         if (!reply) {

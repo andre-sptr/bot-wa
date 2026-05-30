@@ -379,10 +379,63 @@ risiko (yang besar/berisiko di belakang). Mulai konservatif, tune live.
   - 3 test `createGroupRosterClient` (URL/headers, normalized output, error)
   - 2 test `fetchAndCacheRoster` (success+storage, failure→null)
 - Catatan LID: modul ini defensif terhadap `@lid` participants. `normalizeParticipant`
-  menyimpan ID apa adanya (baik `@c.us` maupun `@lid`). Resolusi LID↔nomor asli
-  tergantung data real dari endpoint WAHA — dicatat setelah first real fetch.
-  `contactVariants` di messageTriggers.js sudah generate `@lid` variant untuk matching.
+  menyimpan ID apa adanya (baik `@c.us` maupun `@lid`).
 - Verifikasi: `node -c server.js` PASS; full test suite 80/80 pass.
+
+### REVIEW + FIX (2026-05-30, Opus) — verifikasi ke WAHA grup asli
+- **LID ternyata FALSE ALARM di surface roster**: `participants/v2` grup asli balikin
+  SEMUA `@c.us` (bukan `@lid`). `@lid` cuma muncul di sender webhook, bukan di roster.
+  (Mengoreksi observasi 1503 yang nyampur dua surface itu.)
+- **Blocker asli = roster TANPA nama**: `participants/v2` cuma balikin `{ id, pn, role }`,
+  tanpa `name`. Akibatnya `rosterSummary` nameless + tagging by-name ga bisa match.
+- **FIX (terverifikasi)**: enrich nama dari endpoint contacts WAHA:
+  `GET /api/contacts?session={s}&contactId={id}` → `{ name, pushname, shortName }`.
+  - `pickContactName(data)` (pure): pilih name → pushname → shortName.
+  - `client.fetchContactName(id)`: resilient, return '' kalau error.
+  - `fetchAndCacheRoster`: enrich tiap participant (preserve nama yang udah ada),
+    `name = existing || fetched`. 6 test TDD baru.
+  - Hasil real: 4/5 anggota dapat nama (Ardian, Farid Tet, Rafly Tet, andre); 1 tanpa
+    nama kontak → graceful (cuma dia yang ga bisa di-tag by name).
+- Dampak: Gap tagging (Fase 6) sekarang fungsional begitu `/refresh-members` dijalankan
+  ulang (cache lama belum ada nama). Full suite: 127/127.
+
+---
+
+# GAP #1 — Unified cross-context (Keputusan #5) ✅ IMPLEMENTED (2026-05-30, Opus)
+
+Sebelumnya memory terisolasi per chatId (decision #5 belum jalan). Sekarang Bubu kenal
+orang yang sama lintas DM↔grup, dengan tata krama sosial (opsi A: diskret).
+
+### Temuan kunci (verifikasi WAHA asli)
+- Sender grup = `@lid` (mis. `2327…01@lid`), DM = `@c.us` — ID beda untuk orang sama.
+- WAHA `GET /api/{session}/lids/{lid}` → `{ pn: "628…@c.us" }` → **bridge robust**.
+- Terverifikasi: `2327…01@lid` → `6282…29@c.us` = entry roster "andre". Person-bridge jalan.
+
+### Implementasi (TDD)
+- `modules/lidResolver.js` (BARU): `resolveLid` (cached), `canonicalId(jid)` →
+  @c.us untuk DM/s.whatsapp.net, resolve @lid→@c.us, fallback ke @lid kalau gagal. (9 test)
+- `chatContext.js`:
+  - `addMessage(..., senderJid)` simpan `senderJid` di entry history.
+  - `saveSessionMemory` simpan `participantJids` (kanonik) + `chatType` (dm/group).
+  - `getRelevantMemory(chatId, msg, senderJid)` retrieve by chatId ATAU person
+    (participantJids). Memori asal-DM yang muncul di GRUP ditandai `[privat]`. (7 test crossContext)
+  - Cross-PERSON tetap terisolasi (key by person, memori Budi ga muncul buat Andre).
+- `modules/aiAdvanced.js`: `buildDynamicAwarenessContext` nambah aturan privasi di grup
+  (jangan ungkit `[privat]` kecuali orangnya angkat). (2 test awareness)
+- `server.js`: `lidResolver` + `resolveCanonicalSender`; `makeAskAI`/`handleNaturalLanguage`
+  threading senderJid kanonik; di-resolve di kedua jalur reply (triggered + proaktif).
+
+### Tata krama (opsi A — dipilih user 2026-05-30)
+- Di DM: recall memori orang dari semua konteks (aman, 1-on-1).
+- Di GRUP: memori asal-DM boleh muncul tapi ditandai `[privat]` + Bubu diinstruksi
+  jangan ungkit kecuali orangnya sendiri yang angkat. (Risiko bocor kecil → ngandelin disiplin model.)
+
+### Verifikasi
+- Full suite 145/145 (lidResolver 9, crossContext 7, awareness +2). `node -c server.js` OK.
+- Person-bridge terverifikasi ke WAHA grup asli.
+- ⚠️ Catatan: resolusi @lid butuh WAHA reachable; kalau gagal → fallback ke @lid
+  (orang itu ke-track terpisah sementara, ga error). Live e2e recall lintas-chat
+  belum dites runtime (perlu percakapan asli) — logika ter-cover unit test.
 - Dependency: none teknis, tapi enrich Fase 3 (roster awareness) & WAJIB buat Fase 6.
 
 ## Fase 6 — Tagging beneran ✅ SELESAI

@@ -87,11 +87,20 @@ const saveSessionMemory = (chatId, session) => {
             .filter(m => m.role === 'user' && m.sender)
             .map(m => m.sender)
     )];
+    // Person-key kanonik (@c.us) untuk unified cross-context retrieval.
+    const participantJids = [...new Set(
+        session.history
+            .filter(m => m.role === 'user' && m.senderJid)
+            .map(m => m.senderJid)
+    )];
+    const chatType = String(chatId).endsWith('@g.us') ? 'group' : 'dm';
 
     memories.push({
         chatId,
+        chatType,
         timestamp: Date.now(),
         participants,
+        participantJids,
         topics: extractTopics(session.history),
         summary: generateLocalSummary(session.history),
         messageCount: session.history.length,
@@ -103,9 +112,16 @@ const saveSessionMemory = (chatId, session) => {
     storage.save('session_memories', memories);
 };
 
-const getRelevantMemory = (chatId, currentMessage) => {
+const getRelevantMemory = (chatId, currentMessage, senderJid = null) => {
     const memories = storage.load('session_memories', []);
-    const chatMemories = memories.filter(m => m.chatId === chatId);
+    const currentIsGroup = String(chatId).endsWith('@g.us');
+
+    // Unified cross-context: ambil memori dari chat ini ATAU memori orang yang
+    // sama (canonical senderJid) dari chat lain (DM ↔ grup).
+    const chatMemories = memories.filter(m =>
+        m.chatId === chatId ||
+        (senderJid && Array.isArray(m.participantJids) && m.participantJids.includes(senderJid))
+    );
     if (chatMemories.length === 0) return null;
 
     const msgWords = currentMessage.toLowerCase().match(/\b\w{3,}\b/g) || [];
@@ -124,7 +140,10 @@ const getRelevantMemory = (chatId, currentMessage) => {
 
     return scored.slice(0, 2).map(m => {
         const date = new Date(m.timestamp).toLocaleDateString('id-ID');
-        return `[${date}] ${m.summary}`;
+        // Tata krama (opsi A): memori asal-DM yang muncul di GRUP ditandai [privat]
+        // → Bubu diinstruksi jangan ungkit di depan orang lain (lihat buildDynamicAwarenessContext).
+        const privateMark = (currentIsGroup && m.chatType === 'dm') ? '[privat] ' : '';
+        return `[${date}] ${privateMark}${m.summary}`;
     }).join('\n');
 };
 
@@ -176,12 +195,13 @@ const getHistory = (chatId) => {
     return getSession(chatId).history;
 };
 
-const addMessage = (chatId, userMsg, assistantMsg, senderName = null) => {
+const addMessage = (chatId, userMsg, assistantMsg, senderName = null, senderJid = null) => {
     const session = getSession(chatId);
     const timestamp = new Date().toISOString();
 
     const userEntry = { role: 'user', content: userMsg, timestamp };
     if (senderName) userEntry.sender = senderName;
+    if (senderJid) userEntry.senderJid = senderJid;
 
     session.history.push(userEntry, { role: 'assistant', content: assistantMsg, timestamp });
 

@@ -21,6 +21,26 @@ test('builds DM awareness as background context, not announcement copy', () => {
     assert.match(text, /jangan.*umumin|jangan.*sebut/i);
 });
 
+test('group context includes [privat] discretion rule (Gap #1 opsi A)', () => {
+    const text = buildDynamicAwarenessContext({
+        chatType: 'group',
+        chatName: 'Grup',
+        senderName: 'Andre',
+        chatId: '120@g.us',
+    });
+    assert.match(text, /\[privat\]/);
+    assert.match(text, /jangan.*ungkit|jangan diungkit|kecuali.*angkat/i);
+});
+
+test('DM context does NOT include the [privat] discretion rule', () => {
+    const text = buildDynamicAwarenessContext({
+        chatType: 'dm',
+        senderName: 'Andre',
+        chatId: '628@c.us',
+    });
+    assert.doesNotMatch(text, /\[privat\]/);
+});
+
 test('builds group awareness with group name when available', () => {
     const text = buildDynamicAwarenessContext({
         chatType: 'group',
