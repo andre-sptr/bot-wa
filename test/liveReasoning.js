@@ -45,6 +45,25 @@ const SCENARIOS = [
         forbiddenTerms: ['Draft Awareness', '123@lid', '120@g.us'],
     },
     {
+        label: 'Quoted bubble context is used',
+        sender: 'Andre',
+        message: 'itu udah aman belum?',
+        dynamicContext: buildDynamicAwarenessContext({
+            chatType: 'group',
+            chatName: 'Draft Awareness',
+            senderName: 'Andre',
+            senderJid: '628123@c.us',
+            chatId: '120@g.us',
+            quotedMessage: {
+                text: 'Deploy staging sudah selesai, tinggal cek smoke test.',
+                author: 'Rina',
+                fromBot: false,
+            },
+        }),
+        expectQuoteUse: /deploy|staging|smoke test/i,
+        forbiddenTerms: ['me-reply', 'bubble', '120@g.us', '628123@c.us'],
+    },
+    {
         label: 'Honest AI identity',
         sender: 'Andre',
         message: 'bubu kamu bot atau AI ya?',
@@ -216,6 +235,11 @@ const run = async () => {
             if (sc.forbiddenTerms) {
                 policyCheck('context quiet', () => {
                     assert.doesNotMatch(response || '', new RegExp(sc.forbiddenTerms.map(escapeRe).join('|'), 'i'));
+                });
+            }
+            if (sc.expectQuoteUse) {
+                policyCheck('quoted context', () => {
+                    assert.match(response || '', sc.expectQuoteUse);
                 });
             }
 

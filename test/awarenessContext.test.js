@@ -35,6 +35,22 @@ test('builds group awareness with group name when available', () => {
     assert.match(text, /Pengirim: Rina/);
 });
 
+test('builds quoted message awareness when reply bubble exists', () => {
+    const text = buildDynamicAwarenessContext({
+        chatType: 'group',
+        senderName: 'Andre',
+        quotedMessage: {
+            text: 'Harga BTC tadi 1,7M',
+            author: 'Rina',
+            fromBot: false,
+        },
+    });
+
+    assert.match(text, /me-reply/i);
+    assert.match(text, /Harga BTC tadi 1,7M/);
+    assert.match(text, /Rina/);
+});
+
 test('omits missing optional details without leaking undefined', () => {
     const text = buildDynamicAwarenessContext({ chatType: 'group' });
 
@@ -63,6 +79,29 @@ test('contextAwareResponse includes dynamic chat awareness in system prompt', as
     assert.match(capturedSystemPrompt, /Nama grup: Draft Awareness/);
     assert.match(capturedSystemPrompt, /Pengirim: Andre/);
     assert.match(capturedSystemPrompt, /Ingatan percakapan sebelumnya/);
+});
+
+test('contextAwareResponse includes quoted message in system prompt', async () => {
+    let capturedSystemPrompt = '';
+    const askAI = async (systemPrompt) => {
+        capturedSystemPrompt = systemPrompt;
+        return 'ok';
+    };
+
+    await contextAwareResponse('itu udah naik belum?', askAI, {
+        senderName: 'Andre',
+        chatContext: {
+            chatType: 'group',
+            quotedMessage: {
+                text: 'Harga BTC tadi 1,7M',
+                author: 'Rina',
+                fromBot: false,
+            },
+        },
+    });
+
+    assert.match(capturedSystemPrompt, /Harga BTC tadi 1,7M/);
+    assert.match(capturedSystemPrompt, /me-reply/i);
 });
 
 test('contextAwareResponse remains backward compatible with old positional args', async () => {
@@ -107,5 +146,25 @@ test('buildRuntimeChatContext derives group metadata and best-effort group name'
         chatName: 'Draft Awareness',
         chatId: '120@g.us',
         senderJid: '123@lid',
+    });
+});
+
+test('buildRuntimeChatContext includes quoted message context', () => {
+    const context = buildRuntimeChatContext({
+        chatId: '120@g.us',
+        senderJid: '123@lid',
+        payload: {
+            replyTo: {
+                body: 'Bubu bilang deploy sudah selesai',
+                fromMe: true,
+                participant: '628bot@c.us',
+            },
+        },
+    });
+
+    assert.deepEqual(context.quotedMessage, {
+        text: 'Bubu bilang deploy sudah selesai',
+        author: '628bot@c.us',
+        fromBot: true,
     });
 });

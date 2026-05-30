@@ -296,6 +296,51 @@ const collectReplyParticipantValues = (payload) => {
     ];
 };
 
+const quotedTextFrom = (message = {}) => {
+    return [
+        message.body,
+        message.text,
+        message.caption,
+        message._data?.body,
+        message._data?.text,
+        message._data?.caption,
+    ].map(asString).find(text => text.trim())?.trim() || '';
+};
+
+const quotedAuthorFrom = (message = {}) => {
+    return [
+        message.participant,
+        message.from,
+        message.author,
+        message._data?.participant,
+        message._data?.author,
+        message._data?.id?.participant,
+    ].map(normalizeContactId).find(Boolean) || '';
+};
+
+const getQuotedMessageContext = (payload = {}) => {
+    const data = payload._data || {};
+    const candidates = [
+        payload.replyTo,
+        payload.reply_to,
+        payload.quotedMsg,
+        data.quotedMsg,
+    ].filter(Boolean);
+
+    for (const quoted of candidates) {
+        const text = quotedTextFrom(quoted);
+        if (!text) continue;
+
+        return {
+            text,
+            author: quotedAuthorFrom(quoted),
+            fromBot: quoted.fromMe === true || quoted._data?.fromMe === true,
+        };
+    }
+
+    return null;
+};
+
 const isReplyToBot = (payload, state) => {
     const replyTo = payload?.replyTo || payload?.reply_to;
     const data = payload?._data || {};
@@ -345,6 +390,7 @@ module.exports = {
     detectMessageTrigger,
     getPayloadChatId,
     getPayloadSenderId,
+    getQuotedMessageContext,
     isOutgoingMessage,
     learnBotMentionFromIncoming,
     rememberBotMessage,

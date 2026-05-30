@@ -6,6 +6,7 @@ const {
     detectMessageTrigger,
     getPayloadChatId,
     getPayloadSenderId,
+    getQuotedMessageContext,
     learnBotMentionFromIncoming,
     rememberBotMessage,
 } = require('../modules/messageTriggers');
@@ -46,6 +47,43 @@ test('detects replies through WAHA payload.replyTo participant even when id is a
     });
 
     assert.equal(trigger, 'reply');
+});
+
+test('extracts quoted message context from payload.replyTo', () => {
+    const context = getQuotedMessageContext({
+        replyTo: {
+            body: 'Harga BTC tadi 1,7M',
+            participant: '628111@c.us',
+        },
+    });
+
+    assert.deepEqual(context, {
+        text: 'Harga BTC tadi 1,7M',
+        author: '628111@c.us',
+        fromBot: false,
+    });
+});
+
+test('extracts quoted message context from _data.quotedMsg', () => {
+    const context = getQuotedMessageContext({
+        _data: {
+            quotedMsg: {
+                body: 'Bubu response lama',
+                fromMe: true,
+                author: '628bot@c.us',
+            },
+        },
+    });
+
+    assert.deepEqual(context, {
+        text: 'Bubu response lama',
+        author: '628bot@c.us',
+        fromBot: true,
+    });
+});
+
+test('returns null when quoted payload has no text', () => {
+    assert.equal(getQuotedMessageContext({ replyTo: { id: 'abc' } }), null);
 });
 
 test('detects mentions from WhatsApp contextInfo mentionedJid list', () => {

@@ -4,8 +4,8 @@
 > (DM/grup, siapa lawan bicara, posisinya jalan via nomor WA lewat WAHA) —
 > **tanpa** membacakan konteks itu ke user.
 >
-> Status: Fase 3 selesai (awareness dinamis DM/grup + sender).
-> Reply-bubble awareness lanjut di Fase 4.
+> Status: Fase 4 selesai (reply-bubble awareness).
+> Roster grup + LID research lanjut di Fase 5.
 
 ---
 
@@ -54,16 +54,17 @@ Context yang di-inject ke prompt kebaca model sebagai "info baru yang berguna"
 - ⚠️ Catatan: `notifyName` = nama display yang di-set user sendiri di WA
   (bukan nama kontak di HP kita). Kalau kosong → fallback ke nomor/JID.
 
-### B. Sadar bubble mana yang di-reply ⚠️ DATA ADA, BELUM DI-WIRE
+### B. Sadar bubble mana yang di-reply ✅ SELESAI
 - Status sekarang:
   - Bubu tau "ini pesan me-reply sesuatu" → ✅ (dipakai buat trigger `'reply'`)
-  - Bubu tau **isi** bubble yang di-reply → ❌ belum di-inject ke AI
-- Payload WAHA **bawa** isi quoted msg (`replyTo.body` / `_data.quotedMsg.body`),
-  tapi `makeAskAI` cuma kirim pesan baru + history. Quoted content ga pernah dipakai.
-- Dampak: reply ke bubble lama (>12 pesan / >6 jam expire) → Bubu buta.
-  Reply ke pesan orang lain sambil sebut Bubu → Bubu ga lihat konteks bubble itu.
-- **TODO**: extract `quotedMsg.body` + author bubble → inject ke konteks AI.
-  Target format: `[Andre] (me-reply pesan Bubu: "...") → "itu udah naik belum?"`
+  - Bubu tau **isi** bubble yang di-reply → ✅ di-inject ke AI sebagai konteks dinamis
+- Payload WAHA yang dipakai: `replyTo.body`, `reply_to.body`, `payload.quotedMsg`,
+  dan `_data.quotedMsg`, plus author/from/participant best-effort.
+- Dampak: reply ke bubble lama (>12 pesan / >24 jam active window) tetap bisa nyambung
+  karena isi quoted bubble masuk prompt dinamis walau tidak ada di history aktif.
+- Format runtime: quoted bubble dilabeli LATAR BELAKANG dan "me-reply bubble sebelumnya",
+  bukan untuk diumumkan. Bubu boleh memakai isinya buat nyambung, tapi tetap jangan membacakan
+  label teknisnya.
 
 ### C. Sadar anggota grup + bisa nge-tag 🔬 FEASIBLE (riset LID dulu)
 - **Endpoint daftar member**: `GET /api/{session}/groups/{groupId}/participants/v2`
@@ -95,7 +96,7 @@ Context yang di-inject ke prompt kebaca model sebagai "info baru yang berguna"
 - [x] Inject context dinamis (DM vs grup, senderName) sebagai background, bukan announcement
 - [x] Negative instruction + contoh BENAR/SALAH biar ga recite
 - [x] Aturan: reasoning boleh pakai konteks, response jangan parroting
-- [ ] Wire isi quoted/reply message ke konteks AI (sub-topik B)
+- [x] Wire isi quoted/reply message ke konteks AI (sub-topik B)
 - [ ] Endpoint ambil + cache participants grup (sub-topik C)
 - [ ] Riset & pecahkan LID → nomor untuk tagging (sub-topik C)
 - [ ] Implement tagging via mentions array di sendWA
@@ -332,9 +333,18 @@ risiko (yang besar/berisiko di belakang). Mulai konservatif, tune live.
   Fase 5 kalau payload runtime tidak membawa nama grup.
 - Dependency: Fase 2.
 
-## Fase 4 — Reply-bubble awareness 🟡
-- Extract quotedMsg.body + author bubble → inject ke konteks AI.
-- Test: reply pesan Bubu yang lama → Bubu nyambung (bukan buta).
+## Fase 4 — Reply-bubble awareness ✅ SELESAI
+- [x] `modules/messageTriggers.js`: tambah `getQuotedMessageContext(payload)` untuk ekstrak
+  isi quoted/reply bubble dari `replyTo`, `reply_to`, `payload.quotedMsg`, dan `_data.quotedMsg`.
+- [x] `modules/aiAdvanced.js`: dynamic awareness sekarang menerima `quotedMessage` dan merender
+  satu baris bounded (500 char) sebagai konteks reply bubble.
+- [x] `buildRuntimeChatContext`: otomatis menyertakan `quotedMessage` saat payload membawa quoted text.
+- [x] `test/liveReasoning.js`: tambah skenario "Quoted bubble context is used"; Bubu memakai isi
+  bubble untuk menjawab follow-up "itu", tanpa membocorkan label internal/JID.
+- Verifikasi: `node --test test/persistence.test.js test/bubuPersona.test.js test/systemBlocks.test.js
+  test/awarenessContext.test.js test/reasoning.test.js test/messageTriggers.test.js
+  test/webhookDebug.test.js` = 62/62 pass; `node test/liveReasoning.js` = 10 skenario,
+  banlist hits 0, policy fails 0.
 - Dependency: Fase 3.
 
 ## Fase 5 — Roster grup: fetch + cache + LID (research-heavy) 🟠

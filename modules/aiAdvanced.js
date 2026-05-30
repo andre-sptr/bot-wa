@@ -1,6 +1,8 @@
 // ==========================================
-// AI ADVANCED MODULE — Token-optimized
+// AI ADVANCED MODULE - Token-optimized
 // ==========================================
+
+const { getQuotedMessageContext } = require('./messageTriggers');
 
 const COIN_NAMES = new Set([
     'btc', 'bitcoin', 'eth', 'ethereum', 'sol', 'solana', 'bnb', 'binancecoin',
@@ -78,7 +80,13 @@ const autoCategorize = (message) => {
 };
 
 // Context-aware AI response with sender awareness and memory
-const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJid, chatId } = {}) => {
+const compactQuotedText = (text = '', maxLength = 500) => {
+    const normalized = String(text).replace(/\s+/g, ' ').trim();
+    if (normalized.length <= maxLength) return normalized;
+    return `${normalized.slice(0, maxLength - 1)}…`;
+};
+
+const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJid, chatId, quotedMessage } = {}) => {
     const lines = [
         'Konteks percakapan saat ini (LATAR BELAKANG, bukan buat diumumin):',
         '- Pakai ini untuk memahami situasi, tone, dan audiens.',
@@ -91,6 +99,11 @@ const buildDynamicAwarenessContext = ({ chatType, chatName, senderName, senderJi
     if (senderName) lines.push(`- Pengirim: ${senderName}.`);
     if (senderJid) lines.push(`- ID pengirim: ${senderJid}.`);
     if (chatId) lines.push(`- ID chat: ${chatId}.`);
+    if (quotedMessage?.text) {
+        const author = quotedMessage.author ? ` dari ${quotedMessage.author}` : '';
+        const owner = quotedMessage.fromBot ? ' (pesan Bubu)' : '';
+        lines.push(`- Pesan ini me-reply bubble sebelumnya${author}${owner}: "${compactQuotedText(quotedMessage.text)}".`);
+    }
 
     return lines.join('\n');
 };
@@ -100,8 +113,9 @@ const firstText = (...values) => values.find((value) => typeof value === 'string
 const buildRuntimeChatContext = ({ chatId = '', senderJid = '', payload = {} } = {}) => {
     const data = payload._data || {};
     const isGroup = chatId.endsWith('@g.us');
+    const quotedMessage = getQuotedMessageContext(payload);
 
-    return {
+    const context = {
         chatType: isGroup ? 'group' : 'dm',
         chatName: isGroup
             ? firstText(
@@ -115,6 +129,9 @@ const buildRuntimeChatContext = ({ chatId = '', senderJid = '', payload = {} } =
         chatId,
         senderJid,
     };
+
+    if (quotedMessage) context.quotedMessage = quotedMessage;
+    return context;
 };
 
 const contextAwareResponse = async (message, askAI, senderOrOptions, memoryContextArg) => {
