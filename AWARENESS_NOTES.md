@@ -4,8 +4,8 @@
 > (DM/grup, siapa lawan bicara, posisinya jalan via nomor WA lewat WAHA) —
 > **tanpa** membacakan konteks itu ke user.
 >
-> Status: Fase 6 selesai (tagging beneran via mentions).
-> Proaktif + guardrail lanjut di Fase 7.
+> Status: Fase 7 selesai (proaktif + guardrail).
+> Semua fase awareness roadmap COMPLETE.
 
 ---
 
@@ -245,11 +245,11 @@ tetap aman karena window dibatasi 12 pasang di chatContext.js:205).
   kayak persona. Longgarin kalau kerasa kurang aktif.
 
 ### TODO implementasi (Poin 5)
-- [ ] Ubah flow: pesan grup non-trigger → pre-filter lokal → (kandidat) → gate proaktif
-- [ ] Cooldown per-grup buat pesan proaktif (state in-memory, mirip rateLimitMap)
-- [ ] Gate relevansi (bagian dari reasoning Bubu: "worth nimbrung? kalau ngga, diem")
-- [ ] Command kill-switch + state on/off per-grup (persist via storage)
-- [ ] Tagging proaktif: logic relevan + larangan @all + cooldown
+- [x] Ubah flow: pesan grup non-trigger → pre-filter lokal → (kandidat) → gate proaktif
+- [x] Cooldown per-grup buat pesan proaktif (state in-memory, mirip rateLimitMap)
+- [x] Gate relevansi (bagian dari reasoning Bubu: "worth nimbrung? kalau ngga, diem")
+- [x] Command kill-switch + state on/off per-grup (persist via storage)
+- [x] Tagging proaktif: logic relevan + larangan @all + cooldown
 
 ---
 
@@ -420,12 +420,44 @@ risiko (yang besar/berisiko di belakang). Mulai konservatif, tune live.
 - Verifikasi: `node -c server.js` PASS; full test suite 102/102 pass.
 - Dependency: Fase 5.
 
-## Fase 7 — Proaktif + guardrail (behavior terbesar, paling berisiko) 🔴
-- Flow non-trigger → pre-filter lokal (autoCategorize) → gate relevansi → cooldown → respon/tag.
-- Kill-switch /diem ↔ /aktif (state per-grup, persist via storage).
-- Test: simulasi grup rame — Bubu selektif, cooldown jalan, kill-switch jalan.
+## Fase 7 — Proaktif + guardrail (behavior terbesar, paling berisiko) ✅ SELESAI
+- [x] `modules/proactiveGuard.js`: modul baru dengan kill-switch, pre-filter, cooldown.
+  - `loadProactiveState(groupId)` / `saveProactiveState(groupId, enabled)`: state on/off
+    per-grup, dipersist via storage.js. Default: OFF (konservatif, user opt-in).
+  - `isProactiveEnabled(groupId)`: cek on/off.
+  - `PROACTIVE_CATEGORIES`: `Set(['PERTANYAAN', 'DISKUSI'])`. Hanya kategori ini yang
+    lanjut ke LLM. GREETING, INFO, REQUEST, URGENT langsung DROP.
+  - `shouldConsiderProactive({ groupId, category, msgBody })`: pre-filter lokal gratis.
+    Cek: enabled + kategori valid + panjang pesan minimum (8 char).
+  - `checkProactiveCooldown(groupId, cooldownMs=300000)`: in-memory cooldown 5 menit per
+    grup. Return `{ allowed, remainingMs }`.
+  - `markProactiveSent(groupId)` / `resetProactiveCooldown(groupId)`: manage timestamp.
+  - `PROACTIVE_SKIP_MARKER`: `'[SKIP]'`. AI output mengandung ini → Bubu diem.
+- [x] `server.js`: command `/aktif` dan `/diem` per-grup:
+  - `/aktif` → `saveProactiveState(chatId, true)` → "🔊 Bubu aktif mode!"
+  - `/diem` → `saveProactiveState(chatId, false)` → "🔇 Bubu diem mode."
+  - `/help` diupdate.
+- [x] `server.js`: proactive pipeline di `processIncomingPayload`:
+  - Saat `trigger === null` dan `isGroup`:
+    1. `autoCategorize(msgBody)` → cek `shouldConsiderProactive`.
+    2. `checkProactiveCooldown(chatId)` → kalau allowed:
+    3. `handleNaturalLanguage` dengan `chatContext.proactiveMode = true`.
+    4. Kalau reply mengandung `[SKIP]` atau null → diem, tidak kirim.
+    5. Kalau ada real content → `markProactiveSent` → mention pipeline → `sendWA`.
+  - Debug record: `proactive-candidate`, `proactive-skipped`, `proactive-cooldown`,
+    `proactive-reply`.
+- [x] `modules/aiAdvanced.js`: `buildDynamicAwarenessContext` menerima `proactiveMode`.
+  Kalau true, inject instruksi:
+  "Pesan ini TIDAK ditujukan ke kamu. Jawab HANYA kalau kamu punya value asli.
+  Kalau ragu → jawab HANYA dengan [SKIP]. Diem lebih baik daripada nimbrung ga jelas."
+- [x] `test/proactiveGuard.test.js`: 19 unit test TDD (RED→GREEN):
+  - 4 test state persistence (default OFF, roundtrip, isEnabled, never-set)
+  - 2 test PROACTIVE_CATEGORIES (has/hasn't)
+  - 7 test shouldConsiderProactive (PERTANYAAN, DISKUSI, GREETING, INFO, OFF, short, empty)
+  - 4 test cooldown (first msg, within cooldown, expired, reset)
+  - 2 test constants (SKIP_MARKER, COOLDOWN_MS)
+- Verifikasi: `node -c server.js` PASS; full test suite 121/121 pass.
 - Dependency: Fase 2-5 (awareness & roster mateng dulu biar respon proaktif berkualitas).
-- ⚙️ Dipengaruhi pertanyaan: proactive calibration (kategori apa yang dipertimbangin)
 
 ---
 _Catatan: urutan fleksibel. Fase 1 bisa duluan kapan aja (isolated). Fase 2 = inti visi.

@@ -44,10 +44,9 @@ Fase selesai:
 - Fase 4 — Reply-bubble awareness: selesai.
 - Fase 5 — Roster grup: fetch + cache participants: selesai.
 - Fase 6 — Tagging beneran via mentions array: selesai.
+- Fase 7 — Proaktif + guardrail: selesai.
 
-Yang harus dilanjutkan:
-
-- **Fase 7 — Proaktif + guardrail.**
+Semua fase roadmap Bubu Awareness telah diselesaikan. Bubu kini memiliki awareness penuh!
 
 ---
 
