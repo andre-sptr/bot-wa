@@ -590,8 +590,14 @@ cron.schedule('30 06 * * *', async () => {
 const processIncomingPayload = async ({ body, payload, record, source = 'webhook', force = false }) => {
     const _data = payload._data || {};
     const chatId = getPayloadChatId(payload);
-    const isDM = chatId.endsWith('@c.us');
+    const isGroup = chatId.endsWith('@g.us');
     const isTargetGroup = Boolean(GROUP_ID && chatId === GROUP_ID);
+    // DM = anything that is NOT a group, broadcast, or newsletter.
+    // Covers both legacy @c.us and modern @lid DM chat IDs from WAHA.
+    const isDM = !isGroup
+        && !chatId.endsWith('@broadcast')
+        && !chatId.endsWith('@newsletter')
+        && chatId.length > 0;
     // Allow: target group OR any private DM. Drop other groups / broadcasts / channels.
     if (!isDM && !isTargetGroup) {
         record(`${source}-chat-filtered`, {
@@ -636,7 +642,6 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
     }
 
     // Sender identification (notifyName lives in _data)
-    const isGroup = chatId.endsWith('@g.us');
     const senderJid = isGroup ? getPayloadSenderId(payload, chatId) : chatId;
     const senderName = _data.notifyName || payload.notifyName || senderJid.split('@')[0];
     const chatContext = buildRuntimeChatContext({ chatId, senderJid, payload });
@@ -1024,14 +1029,19 @@ const pollWahaChats = async () => {
     try {
         const data = await wahaGet(`/api/${WAHA_SESSION}/chats`, { limit: 20 });
         const chats = Array.isArray(data) ? data : [];
-        // Process both: target group AND any DM (private chat) with unread messages
+        // Process both: target group AND any DM (private chat)
+        // DMs can be @c.us or @lid depending on WAHA version
         const targetMessages = chats
             .map(chat => ({ chat, payload: chat.lastMessage }))
             .filter(item => {
                 if (!item.payload) return false;
                 const cid = getPayloadChatId(item.payload);
-                // Include: target group OR DM (private chat)
-                return cid === GROUP_ID || cid.endsWith('@c.us');
+                if (cid === GROUP_ID) return true; // target group
+                // DM: not a group, not broadcast, not newsletter
+                if (cid.endsWith('@g.us')) return false;
+                if (cid.endsWith('@broadcast')) return false;
+                if (cid.endsWith('@newsletter')) return false;
+                return cid.length > 0;
             });
 
         if (!pollBaselineReady) {
