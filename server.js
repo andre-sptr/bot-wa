@@ -49,6 +49,7 @@ const {
 const { createCooldownStore } = require('./modules/cooldownStore');
 const { getCrypto, getMultipleCrypto, getKurs } = require('./modules/crypto');
 const { createCommandHandler } = require('./modules/commands');
+const { createWebhookProcessor } = require('./modules/webhookProcessor');
 const lifecycle = require('./modules/lifecycle');
 
 const app = express();
@@ -417,291 +418,24 @@ cron.schedule('30 06 * * *', async () => {
 // 9. WEBHOOK
 // ==========================================
 
-const processIncomingPayload = async ({ body, payload, record, source = 'webhook', force = false }) => {
-    const _data = payload._data || {};
-    const chatId = getPayloadChatId(payload);
-    const isGroup = chatId.endsWith('@g.us');
-    const isTargetGroup = Boolean(GROUP_ID && chatId === GROUP_ID);
-    // DM = anything that is NOT a group, broadcast, or newsletter.
-    // Covers both legacy @c.us and modern @lid DM chat IDs from WAHA.
-    const isDM = !isGroup
-        && !chatId.endsWith('@broadcast')
-        && !chatId.endsWith('@newsletter')
-        && chatId.length > 0;
-    // Allow: target group OR any private DM. Drop other groups / broadcasts / channels.
-    if (!isDM && !isTargetGroup) {
-        record(`${source}-chat-filtered`, {
-            reason: 'chat is neither target group nor DM',
-            expectedGroupId: GROUP_ID,
-            actualChatId: chatId,
-            payload: summarizePayload(body, payload, chatId),
-        });
-        return;
-    }
-
-    if (isOutgoingMessage(payload)) {
-        const tracked = rememberBotMessage(botTriggerState, {
-            id: _data.id || payload.id,
-            participant: payload.participant || payload.author,
-            author: payload.author,
-            _data,
-            me: body.me,
-        });
-        markProcessedIncoming(payload);
-        record(`${source}-outgoing-ignored`, {
-            payload: summarizePayload(body, payload, chatId),
-            tracked,
-            state: summarizeBotState(),
-        });
-        return;
-    }
-
-    const msgBody = (payload.body || _data.body || '').trim();
-    if (!msgBody) {
-        record(`${source}-empty-body`, {
-            payload: summarizePayload(body, payload, chatId),
-        });
-        return;
-    }
-
-    if (!force && hasProcessedIncoming(payload)) {
-        record(`${source}-duplicate`, {
-            payload: summarizePayload(body, payload, chatId),
-        });
-        return;
-    }
-    // Atomic mark BEFORE any await so concurrent webhook+poll cannot both pass.
-    if (!force) markProcessedIncoming(payload);
-
-    // Sender identification (notifyName lives in _data)
-    const senderJid = isGroup ? getPayloadSenderId(payload, chatId) : chatId;
-    const senderName = _data.notifyName || payload.notifyName || senderJid.split('@')[0];
-    const chatContext = buildRuntimeChatContext({ chatId, senderJid, payload });
-
-    // Enrich with roster summary for group chats
-    let roster = null;
-    if (isGroup) {
-        roster = loadRoster(chatId);
-        // Auto-fetch roster if not cached yet (first time in this group)
-        if (!roster && groupRosterClient) {
-            try {
-                roster = await fetchAndCacheRoster({ client: groupRosterClient, groupId: chatId });
-                if (roster) {
-                    console.log(`[Roster] Auto-fetched roster for ${chatId}: ${roster.participants.length} members`);
-                }
-            } catch (e) {
-                console.error(`[Roster] Auto-fetch failed for ${chatId}:`, e?.message);
-            }
-        }
-        if (roster && roster.participants) {
-            const names = roster.participants
-                .filter(p => p.name)
-                .map(p => `${p.name} (${p.id})`)
-                .slice(0, 20);
-            chatContext.rosterSummary = names.length > 0
-                ? `${roster.participants.length} anggota (${names.join(', ')})`
-                : `${roster.participants.length} anggota`;
-        }
-    }
-
-    // === Trigger detection ===
-    const learnedFromIncoming = learnBotMentionFromIncoming(botTriggerState, payload);
-    if (learnedFromIncoming.length > 0) {
-        record(`${source}-incoming-bot-lid-learned`, {
-            learnedBotIdentifiers: learnedFromIncoming,
-            payload: summarizePayload(body, payload, chatId, senderJid),
-            state: summarizeBotState(),
-        });
-    }
-
-    const trigger = detectMessageTrigger({ body: msgBody, payload, state: botTriggerState, isDM });
-    if (!trigger) {
-        // === PROACTIVE PIPELINE (group only) ===
-        if (isGroup) {
-            const category = autoCategorize(msgBody);
-            if (shouldConsiderProactive({ groupId: chatId, category, msgBody })) {
-                const cooldown = checkProactiveCooldown(chatId);
-                if (cooldown.allowed) {
-                    record(`${source}-proactive-candidate`, {
-                        category,
-                        senderName,
-                        chatId,
-                        msgPreview: previewText(msgBody),
-                    });
-
-                    await withChatLock(chatId, async () => {
-                        const canonicalSenderJid = await resolveCanonicalSender(senderJid);
-                        const askAI = makeAskAI(chatId, senderName, canonicalSenderJid);
-
-                        // Inject proactive instruction into chatContext
-                        chatContext.proactiveMode = true;
-
-                        const reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext, canonicalSenderJid);
-
-                        if (!reply || reply.includes(PROACTIVE_SKIP_MARKER)) {
-                            record(`${source}-proactive-skipped`, {
-                                reason: !reply ? 'no-reply' : 'ai-skip',
-                                chatId,
-                            });
-                            return;
-                        }
-
-                        markProactiveSent(chatId);
-
-                        const dms = extractDMs(reply);
-                        reply = stripDMTags(reply);
-
-                        if (dms.length > 0) {
-                            record(`${source}-proactive-dms-detected`, { count: dms.length });
-                            for (const dm of dms) {
-                                let target = dm.target;
-                                if (!target.includes('@')) {
-                                    target += '@c.us';
-                                }
-                                await sendWA(dm.message, target);
-                                record(`${source}-proactive-dm-sent`, { target, preview: previewText(dm.message) });
-                            }
-                        }
-
-                        if (!reply) return; // If the reply was only DMs, don't send an empty message
-
-                        // Mention pipeline (reuse Fase 6)
-                        let finalReply = reply;
-                        let mentions = [];
-                        if (roster && roster.participants) {
-                            const intents = extractMentionIntents(reply, roster.participants);
-                            if (intents.length > 0) {
-                                const now = Date.now();
-                                const lastMention = mentionCooldownStore.get(chatId);
-                                if (now - lastMention >= MENTION_COOLDOWN_MS) {
-                                    const formatted = formatMentionedReply(reply, intents);
-                                    finalReply = formatted.text;
-                                    mentions = formatted.mentions;
-                                    mentionCooldownStore.set(chatId, now);
-                                }
-                            }
-                        }
-
-                        record(`${source}-proactive-reply`, {
-                            chatId,
-                            senderName,
-                            replyPreview: previewText(finalReply),
-                            mentionCount: mentions.length,
-                        });
-                        await sendWA(finalReply, chatId, mentions);
-                    });
-                    return;
-                } else {
-                    record(`${source}-proactive-cooldown`, {
-                        chatId,
-                        remainingMs: cooldown.remainingMs,
-                    });
-                }
-            }
-        }
-
-        record(`${source}-no-trigger`, {
-            payload: summarizePayload(body, payload, chatId, senderJid),
-            state: summarizeBotState(),
-        });
-        return;
-    }
-    if (isRateLimited(senderJid)) {
-        record(`${source}-rate-limited`, {
-            trigger,
-            senderName,
-            payload: summarizePayload(body, payload, chatId, senderJid),
-        });
-        return;
-    }
-
-    record(`${source}-trigger-detected`, {
-        trigger,
-        senderName,
-        payload: summarizePayload(body, payload, chatId, senderJid),
-        state: summarizeBotState(),
-    });
-    console.log(`[Msg] ${senderName} | ${trigger} | "${msgBody.substring(0, 50)}"`);
-
-    // Process with per-chat lock to prevent race conditions
-    await withChatLock(chatId, async () => {
-        const canonicalSenderJid = await resolveCanonicalSender(senderJid);
-        const askAI = makeAskAI(chatId, senderName, canonicalSenderJid);
-
-        let reply = null;
-        if (trigger === 'cmd') {
-            reply = await processCommand(msgBody, chatId, askAI);
-        } else {
-            reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext, canonicalSenderJid);
-        }
-
-        if (!reply) {
-            record(`${source}-no-reply-generated`, {
-                trigger,
-                senderName,
-                payload: summarizePayload(body, payload, chatId, senderJid),
-            });
-            return;
-        }
-
-        const dms = extractDMs(reply);
-        reply = stripDMTags(reply);
-
-        if (dms.length > 0) {
-            record(`${source}-dms-detected`, { count: dms.length });
-            for (const dm of dms) {
-                let target = dm.target;
-                if (!target.includes('@')) {
-                    target += '@c.us';
-                }
-                await sendWA(dm.message, target);
-                record(`${source}-dm-sent`, { target, preview: previewText(dm.message) });
-            }
-        }
-
-        if (!reply) return; // If the reply was only DMs, don't send an empty message to the chat
-
-        record(`${source}-reply-generated`, {
-            trigger,
-            senderName,
-            chatId,
-            replyPreview: previewText(reply),
-        });
-
-        // Mention pipeline for group chats
-        let mentions = [];
-        if (isGroup && roster && roster.participants) {
-            const intents = extractMentionIntents(reply, roster.participants);
-            if (intents.length > 0) {
-                const now = Date.now();
-                const lastMention = mentionCooldownStore.get(chatId);
-                if (now - lastMention >= MENTION_COOLDOWN_MS) {
-                    const formatted = formatMentionedReply(reply, intents);
-                    reply = formatted.text;
-                    mentions = formatted.mentions;
-                    mentionCooldownStore.set(chatId, now);
-                    record(`${source}-mentions-applied`, {
-                        mentionCount: mentions.length,
-                        intents: intents.map(i => ({ matched: i.matchedText, id: i.participant.id })),
-                    });
-                } else {
-                    record(`${source}-mentions-cooldown`, {
-                        chatId,
-                        cooldownRemainingMs: MENTION_COOLDOWN_MS - (now - lastMention),
-                    });
-                }
-            }
-        }
-
-        const sendResult = await sendWA(reply, chatId, mentions);
-        record(sendResult.ok ? `${source}-reply-sent` : `${source}-reply-send-failed`, {
-            trigger,
-            senderName,
-            chatId,
-            error: sendResult.error || null,
-        });
-    });
-};
+const processIncomingPayload = createWebhookProcessor({
+    sendWA,
+    makeAskAI,
+    processCommand,
+    handleNaturalLanguage,
+    summarizePayload,
+    resolveCanonicalSender,
+    hasProcessedIncoming,
+    markProcessedIncoming,
+    isRateLimited,
+    summarizeBotState,
+    botTriggerState,
+    groupRosterClient,
+    lidResolver,
+    mentionCooldownStore,
+    GROUP_ID,
+    MENTION_COOLDOWN_MS,
+});
 
 app.post('/webhook', async (req, res) => {
     res.sendStatus(200);
