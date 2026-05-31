@@ -171,7 +171,7 @@ const getMemoryCache = () => {
 const invalidateMemoryCache = () => { memoryCache = null; };
 
 const getRelevantMemory = (chatId, currentMessage, senderJid = null) => {
-    const { memories, byChat, byJid } = getMemoryCache();
+    const { memories, byChat, byJid, df, N: rawN } = getMemoryCache();
     const currentIsGroup = String(chatId).endsWith('@g.us');
 
     // Gabungkan kandidat lewat index (O(k), bukan O(n) scan).
@@ -190,9 +190,7 @@ const getRelevantMemory = (chatId, currentMessage, senderJid = null) => {
 
     // TF-IDF lite: score = Σ (tf × idf) untuk setiap kata query yang match topik memori.
     // idf = log(1 + N/df). Substring match dapat 0.3× credit (preserve fuzzy behavior lama).
-    const cache = getMemoryCache();
-    const N = Math.max(1, cache.N);
-    const df = cache.df;
+    const N = Math.max(1, rawN);
     const scored = [];
     for (const i of candidateIdxs) {
         const mem = memories[i];
@@ -311,8 +309,7 @@ const clearHistory = (chatId) => {
 const getStats = (chatId) => {
     const session = getSession(chatId);
     const elapsed = Date.now() - session.lastActivity;
-    const memories = storage.load('session_memories', []);
-    const chatMemoryCount = memories.filter(m => m.chatId === chatId).length;
+    const chatMemoryCount = (getMemoryCache().byChat.get(chatId) ?? []).length;
 
     return {
         messageCount: session.history.length,
