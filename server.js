@@ -63,7 +63,10 @@ const BOT_PHONE = process.env.BOT_PHONE?.replace(/\D/g, '') || '';
 const BOT_LID = process.env.BOT_LID?.replace(/@lid$/i, '') || '';
 const PORT = process.env.PORT || 3000;
 const DEBUG_TOKEN = process.env.DEBUG_TOKEN || '';
-const WAHA_POLL_INTERVAL_MS = parseInt(process.env.WAHA_POLL_INTERVAL_MS || '5000', 10);
+// Webhook jadi path utama; polling cuma safety net kalau webhook miss/delay.
+// Default 30s = ~2880 hit/hari ke WAHA /chats. Sebelumnya 5s = ~17k/hari (boros).
+// Override via env WAHA_POLL_INTERVAL_MS kalau butuh refresh lebih cepat di dev.
+const WAHA_POLL_INTERVAL_MS = parseInt(process.env.WAHA_POLL_INTERVAL_MS || '30000', 10);
 const BUBU_PERSONA = buildBubuPersona({ botPhone: BOT_PHONE });
 
 const anthropic = new Anthropic({
