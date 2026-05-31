@@ -65,7 +65,11 @@ const DEBUG_TOKEN = process.env.DEBUG_TOKEN || '';
 const WAHA_POLL_INTERVAL_MS = parseInt(process.env.WAHA_POLL_INTERVAL_MS || '5000', 10);
 const BUBU_PERSONA = buildBubuPersona({ botPhone: BOT_PHONE });
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    maxRetries: 3,        // default 2; +1 untuk transient 429/5xx
+    timeout: 30_000,      // 30s per request, ditambah retry budget
+});
 
 const webhookDebug = createDebugStore({ maxEntries: 100 });
 
@@ -211,7 +215,11 @@ const makeAskAI = (chatId, senderName, senderJid = null) => async (systemPrompt,
         return aiReply;
     } catch (error) {
         console.error('Error AI:', error?.message || error);
-        return null;
+        // Setelah SDK retry budget habis: jangan bisu — kasih sinyal ramah.
+        // null hanya untuk kasus tertentu (mis. summarizeConversation) supaya caller bisa
+        // kasih message-nya sendiri; di sini chat normal punya chatId+sender → reply fallback.
+        if (!chatId) return null;
+        return 'Bubu lagi nge-lag bentar nih, coba lagi ya sebentar.';
     }
 };
 
