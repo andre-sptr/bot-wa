@@ -4,7 +4,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test test/*.test.js",
+    "test:live": "node --test test/liveReasoning.js",
+    "test:all": "npm test && npm run test:live"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
