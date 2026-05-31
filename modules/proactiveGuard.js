@@ -65,9 +65,31 @@ const shouldConsiderProactive = ({ groupId, category, msgBody }) => {
     return true;
 };
 
-// ── Cooldown (in-memory) ─────────────────────────────────────────
+// ── Cooldown (persisted; in-memory mirror) ───────────────────────
 
-const proactiveCooldownMap = new Map();
+const COOLDOWN_STORAGE_KEY = 'proactive_cooldowns';
+
+const loadCooldownsFromDisk = () => {
+    const data = storage.load(COOLDOWN_STORAGE_KEY, null);
+    const map = new Map();
+    if (!data || typeof data !== 'object') return map;
+    const now = Date.now();
+    for (const [groupId, ts] of Object.entries(data)) {
+        // Drop entries yang sudah expired (housekeeping otomatis).
+        if (typeof ts === 'number' && now - ts < PROACTIVE_COOLDOWN_MS) {
+            map.set(groupId, ts);
+        }
+    }
+    return map;
+};
+
+const proactiveCooldownMap = loadCooldownsFromDisk();
+
+const persistCooldowns = () => {
+    const obj = {};
+    for (const [k, v] of proactiveCooldownMap.entries()) obj[k] = v;
+    storage.save(COOLDOWN_STORAGE_KEY, obj);
+};
 
 /**
  * Check if proactive response is allowed (cooldown elapsed).
@@ -91,6 +113,7 @@ const checkProactiveCooldown = (groupId, cooldownMs = PROACTIVE_COOLDOWN_MS) => 
  */
 const markProactiveSent = (groupId) => {
     proactiveCooldownMap.set(groupId, Date.now());
+    persistCooldowns();
 };
 
 /**
@@ -98,6 +121,7 @@ const markProactiveSent = (groupId) => {
  */
 const resetProactiveCooldown = (groupId) => {
     proactiveCooldownMap.delete(groupId);
+    persistCooldowns();
 };
 
 module.exports = {
