@@ -13,7 +13,9 @@ const { getPersonaPrompt } = require('./modules/aiFeatures');
 const { loadAndStartReminders, checkAllServers } = require('./modules/automation');
 const {
     createBotTriggerState,
+    detectMessageTrigger,
     getPayloadChatId,
+    getPayloadSenderId,
     messageIdCandidates,
     rememberBotMessage,
 } = require('./modules/messageTriggers');
