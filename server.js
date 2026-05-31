@@ -46,6 +46,7 @@ const {
     isProactiveEnabled,
     PROACTIVE_SKIP_MARKER,
 } = require('./modules/proactiveGuard');
+const { createCooldownStore } = require('./modules/cooldownStore');
 
 const app = express();
 app.use(express.json());
@@ -74,8 +75,11 @@ const webhookDebug = createDebugStore({ maxEntries: 100 });
 const rateLimitMap = new Map();
 const RATE_LIMIT_MS = 3000;
 
-const mentionCooldownMap = new Map();
 const MENTION_COOLDOWN_MS = 5_000; // 5s cooldown per group for mentions
+const mentionCooldownStore = createCooldownStore({
+    storageKey: 'mention_cooldowns',
+    ttlMs: MENTION_COOLDOWN_MS,
+});
 
 const isRateLimited = (userId) => {
     const now = Date.now();
@@ -742,12 +746,12 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
                             const intents = extractMentionIntents(reply, roster.participants);
                             if (intents.length > 0) {
                                 const now = Date.now();
-                                const lastMention = mentionCooldownMap.get(chatId) || 0;
+                                const lastMention = mentionCooldownStore.get(chatId);
                                 if (now - lastMention >= MENTION_COOLDOWN_MS) {
                                     const formatted = formatMentionedReply(reply, intents);
                                     finalReply = formatted.text;
                                     mentions = formatted.mentions;
-                                    mentionCooldownMap.set(chatId, now);
+                                    mentionCooldownStore.set(chatId, now);
                                 }
                             }
                         }
@@ -844,12 +848,12 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
             const intents = extractMentionIntents(reply, roster.participants);
             if (intents.length > 0) {
                 const now = Date.now();
-                const lastMention = mentionCooldownMap.get(chatId) || 0;
+                const lastMention = mentionCooldownStore.get(chatId);
                 if (now - lastMention >= MENTION_COOLDOWN_MS) {
                     const formatted = formatMentionedReply(reply, intents);
                     reply = formatted.text;
                     mentions = formatted.mentions;
-                    mentionCooldownMap.set(chatId, now);
+                    mentionCooldownStore.set(chatId, now);
                     record(`${source}-mentions-applied`, {
                         mentionCount: mentions.length,
                         intents: intents.map(i => ({ matched: i.matchedText, id: i.participant.id })),
