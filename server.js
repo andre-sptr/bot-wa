@@ -47,6 +47,7 @@ const {
     PROACTIVE_SKIP_MARKER,
 } = require('./modules/proactiveGuard');
 const { createCooldownStore } = require('./modules/cooldownStore');
+const lifecycle = require('./modules/lifecycle');
 
 const app = express();
 app.use(express.json());
@@ -1119,14 +1120,24 @@ const pollWahaChats = async () => {
 // ==========================================
 loadAndStartReminders(sendWA);
 
+let pollInterval = null;
 if (WAHA_POLL_INTERVAL_MS && WAHA_POLL_INTERVAL_MS >= 1000) {
     pollWahaChats();
-    setInterval(pollWahaChats, WAHA_POLL_INTERVAL_MS);
+    pollInterval = setInterval(pollWahaChats, WAHA_POLL_INTERVAL_MS);
     console.log(`[Poll] WAHA chat fallback aktif tiap ${WAHA_POLL_INTERVAL_MS}ms`);
+    lifecycle.register('stop-poll', () => clearInterval(pollInterval));
 }
 
 cron.schedule('*/5 * * * *', async () => {
     await checkAllServers(sendWA);
 }, { timezone: 'Asia/Jakarta' });
 
-app.listen(PORT, () => console.log(`Bubu Bot aktif di port ${PORT}`));
+const httpServer = app.listen(PORT, () => console.log(`Bubu Bot aktif di port ${PORT}`));
+
+lifecycle.register('close-http', () => new Promise((resolve) => {
+    httpServer.close(() => resolve());
+    // Forced timeout: jangan hang lebih dari 5 detik.
+    setTimeout(resolve, 5_000).unref();
+}));
+
+lifecycle.installSignalHandlers();
