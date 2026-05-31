@@ -3,51 +3,29 @@ const express = require('express');
 const axios = require('axios');
 const cron = require('node-cron');
 const Anthropic = require('@anthropic-ai/sdk');
-const { getHistory, addMessage, clearHistory, getStats, getSummaries, getRelevantMemory, withChatLock } = require('./chatContext');
+const { getHistory, addMessage, getRelevantMemory } = require('./chatContext');
 const {
     classifyIntent,
     autoCategorize,
-    buildRuntimeChatContext,
     contextAwareResponse,
-    summarizeConversation,
 } = require('./modules/aiAdvanced');
-const { getPersonaPrompt, getActivePersonaName } = require('./modules/aiFeatures');
-const { loadAndStartReminders, manageRecurringReminder, manageServerMonitor, checkAllServers } = require('./modules/automation');
+const { getPersonaPrompt } = require('./modules/aiFeatures');
+const { loadAndStartReminders, checkAllServers } = require('./modules/automation');
 const {
     createBotTriggerState,
-    detectMessageTrigger,
     getPayloadChatId,
-    getPayloadSenderId,
-    isOutgoingMessage,
-    learnBotMentionFromIncoming,
     messageIdCandidates,
     rememberBotMessage,
 } = require('./modules/messageTriggers');
 const { createDebugStore, previewText, safeError } = require('./modules/webhookDebug');
-const { parseBubuReply, extractDMs, stripDMTags } = require('./modules/reasoning');
+const { parseBubuReply } = require('./modules/reasoning');
 const { buildBubuPersona } = require('./modules/bubuPersona');
 const { buildSystemBlocks } = require('./modules/systemBlocks');
-const {
-    createGroupRosterClient,
-    fetchAndCacheRoster,
-    loadRoster,
-} = require('./modules/groupRoster');
+const { createGroupRosterClient } = require('./modules/groupRoster');
 const { createLidResolver } = require('./modules/lidResolver');
-const {
-    extractMentionIntents,
-    formatMentionedReply,
-    guardMentions,
-} = require('./modules/mentionHelper');
-const {
-    shouldConsiderProactive,
-    checkProactiveCooldown,
-    markProactiveSent,
-    saveProactiveState,
-    isProactiveEnabled,
-    PROACTIVE_SKIP_MARKER,
-} = require('./modules/proactiveGuard');
+const { guardMentions } = require('./modules/mentionHelper');
 const { createCooldownStore } = require('./modules/cooldownStore');
-const { getCrypto, getMultipleCrypto, getKurs } = require('./modules/crypto');
+const { getMultipleCrypto } = require('./modules/crypto');
 const { createCommandHandler } = require('./modules/commands');
 const { createWebhookProcessor } = require('./modules/webhookProcessor');
 const lifecycle = require('./modules/lifecycle');
