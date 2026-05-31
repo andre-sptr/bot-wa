@@ -7,7 +7,10 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
-const cache = new Map();
+// Shared across re-require cycles (e.g. test reload()) so old references don't
+// serve stale entries after a new instance writes fresh data.
+if (!global.__storageCacheMap) global.__storageCacheMap = new Map();
+const cache = global.__storageCacheMap;
 const CACHE_TTL = 30 * 1000;
 
 const getFilePath = (name) => path.join(DATA_DIR, `${name}.json`);

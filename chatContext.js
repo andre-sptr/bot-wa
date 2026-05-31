@@ -48,19 +48,22 @@ const STOP_WORDS = new Set([
     'baik', 'bagus', 'oke', 'okay', 'yes', 'iya', 'gitu', 'begitu',
 ]);
 
+// Returns top-30 words as object map { word: termFrequency }. Naik dari 15 → 30
+// supaya TF-IDF punya kandidat scoring lebih kaya. Memori lama dengan topics: array
+// tetap di-handle via topicsAsMap di getRelevantMemory.
 const extractTopics = (messages) => {
     const text = messages.map(m => m.content).join(' ').toLowerCase();
     const words = text.match(/\b[a-zA-Z0-9]{3,}\b/g) || [];
     const freq = {};
-    words.forEach(w => {
+    for (const w of words) {
         if (!STOP_WORDS.has(w) && w.length > 2) {
             freq[w] = (freq[w] || 0) + 1;
         }
-    });
-    return Object.entries(freq)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 15)
-        .map(([word]) => word);
+    }
+    const top = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 30);
+    const result = {};
+    for (const [w, c] of top) result[w] = c;
+    return result;
 };
 
 // ==========================================
@@ -135,6 +138,7 @@ let memoryCache = null;
 const buildMemoryCache = (memories) => {
     const byChat = new Map();
     const byJid = new Map();
+    const df = {}; // document frequency: word → jumlah memori yang punya kata itu
     memories.forEach((m, i) => {
         if (m.chatId) {
             if (!byChat.has(m.chatId)) byChat.set(m.chatId, []);
@@ -146,8 +150,12 @@ const buildMemoryCache = (memories) => {
                 byJid.get(jid).push(i);
             }
         }
+        const topicMap = topicsAsMap(m.topics);
+        for (const word of Object.keys(topicMap)) {
+            df[word] = (df[word] || 0) + 1;
+        }
     });
-    return { memories, byChat, byJid, size: memories.length };
+    return { memories, byChat, byJid, df, N: memories.length, size: memories.length };
 };
 
 const getMemoryCache = () => {
@@ -180,15 +188,33 @@ const getRelevantMemory = (chatId, currentMessage, senderJid = null) => {
     const meaningful = msgWords.filter(w => !STOP_WORDS.has(w));
     if (meaningful.length === 0) return null;
 
+    // TF-IDF lite: score = Σ (tf × idf) untuk setiap kata query yang match topik memori.
+    // idf = log(1 + N/df). Substring match dapat 0.3× credit (preserve fuzzy behavior lama).
+    const cache = getMemoryCache();
+    const N = Math.max(1, cache.N);
+    const df = cache.df;
     const scored = [];
     for (const i of candidateIdxs) {
         const mem = memories[i];
         const topicMap = topicsAsMap(mem.topics);
-        const topicWords = Object.keys(topicMap);
-        const overlap = topicWords.filter(topic =>
-            meaningful.some(w => topic.includes(w) || w.includes(topic))
-        ).length;
-        if (overlap > 0) scored.push({ mem, score: overlap });
+        let score = 0;
+        for (const qw of meaningful) {
+            if (topicMap[qw]) {
+                // Exact match: full credit.
+                const idf = Math.log(1 + N / (df[qw] || 1));
+                score += topicMap[qw] * idf;
+            } else {
+                // Substring fallback: ambil match pertama, credit 0.3×.
+                for (const tw of Object.keys(topicMap)) {
+                    if (tw.includes(qw) || qw.includes(tw)) {
+                        const idf = Math.log(1 + N / (df[tw] || 1));
+                        score += topicMap[tw] * idf * 0.3;
+                        break;
+                    }
+                }
+            }
+        }
+        if (score > 0) scored.push({ mem, score });
     }
     if (scored.length === 0) return null;
 
