@@ -160,7 +160,7 @@ const createWebhookProcessor = ({
                             // Inject proactive instruction into chatContext
                             chatContext.proactiveMode = true;
 
-                            const reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext, canonicalSenderJid);
+                            let reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext, canonicalSenderJid);
 
                             if (!reply || reply.includes(PROACTIVE_SKIP_MARKER)) {
                                 record(`${source}-proactive-skipped`, {
