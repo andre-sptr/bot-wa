@@ -110,40 +110,96 @@ const saveSessionMemory = (chatId, session) => {
     // hapus manual isi folder data/. Token tetap hemat karena retrieval (getRelevantMemory)
     // cuma ambil top-K relevan, bukan inject semua.
     storage.save('session_memories', memories);
+    invalidateMemoryCache();
 };
 
-const getRelevantMemory = (chatId, currentMessage, senderJid = null) => {
+// ==========================================
+// Memory cache + index (Task G).
+// Lazy-built, invalidated on saveSessionMemory.
+// ==========================================
+
+// Helper backward-compat: legacy topics: array → treat each word as TF=1.
+// New topics: object {word: count}.
+const topicsAsMap = (topics) => {
+    if (!topics) return {};
+    if (Array.isArray(topics)) {
+        const m = {};
+        for (const w of topics) m[w] = 1;
+        return m;
+    }
+    return topics;
+};
+
+let memoryCache = null;
+
+const buildMemoryCache = (memories) => {
+    const byChat = new Map();
+    const byJid = new Map();
+    memories.forEach((m, i) => {
+        if (m.chatId) {
+            if (!byChat.has(m.chatId)) byChat.set(m.chatId, []);
+            byChat.get(m.chatId).push(i);
+        }
+        if (Array.isArray(m.participantJids)) {
+            for (const jid of m.participantJids) {
+                if (!byJid.has(jid)) byJid.set(jid, []);
+                byJid.get(jid).push(i);
+            }
+        }
+    });
+    return { memories, byChat, byJid, size: memories.length };
+};
+
+const getMemoryCache = () => {
     const memories = storage.load('session_memories', []);
+    const lastTs = memories.length > 0 ? memories[memories.length - 1].timestamp : 0;
+    if (!memoryCache || memoryCache.size !== memories.length || memoryCache.lastTs !== lastTs) {
+        memoryCache = buildMemoryCache(memories);
+        memoryCache.lastTs = lastTs;
+    }
+    return memoryCache;
+};
+
+const invalidateMemoryCache = () => { memoryCache = null; };
+
+const getRelevantMemory = (chatId, currentMessage, senderJid = null) => {
+    const { memories, byChat, byJid } = getMemoryCache();
     const currentIsGroup = String(chatId).endsWith('@g.us');
 
-    // Unified cross-context: ambil memori dari chat ini ATAU memori orang yang
-    // sama (canonical senderJid) dari chat lain (DM ↔ grup).
-    const chatMemories = memories.filter(m =>
-        m.chatId === chatId ||
-        (senderJid && Array.isArray(m.participantJids) && m.participantJids.includes(senderJid))
-    );
-    if (chatMemories.length === 0) return null;
+    // Gabungkan kandidat lewat index (O(k), bukan O(n) scan).
+    const candidateIdxs = new Set();
+    if (byChat.has(chatId)) {
+        for (const i of byChat.get(chatId)) candidateIdxs.add(i);
+    }
+    if (senderJid && byJid.has(senderJid)) {
+        for (const i of byJid.get(senderJid)) candidateIdxs.add(i);
+    }
+    if (candidateIdxs.size === 0) return null;
 
     const msgWords = currentMessage.toLowerCase().match(/\b\w{3,}\b/g) || [];
     const meaningful = msgWords.filter(w => !STOP_WORDS.has(w));
     if (meaningful.length === 0) return null;
 
-    const scored = chatMemories.map(mem => {
-        const overlap = mem.topics.filter(topic =>
+    const scored = [];
+    for (const i of candidateIdxs) {
+        const mem = memories[i];
+        const topicMap = topicsAsMap(mem.topics);
+        const topicWords = Object.keys(topicMap);
+        const overlap = topicWords.filter(topic =>
             meaningful.some(w => topic.includes(w) || w.includes(topic))
         ).length;
-        return { ...mem, score: overlap };
-    }).filter(m => m.score > 0)
-      .sort((a, b) => b.score - a.score || b.timestamp - a.timestamp);
-
+        if (overlap > 0) scored.push({ mem, score: overlap });
+    }
     if (scored.length === 0) return null;
 
-    return scored.slice(0, 2).map(m => {
-        const date = new Date(m.timestamp).toLocaleDateString('id-ID');
+    scored.sort((a, b) => b.score - a.score || b.mem.timestamp - a.mem.timestamp);
+
+    return scored.slice(0, 2).map(({ mem }) => {
+        const date = new Date(mem.timestamp).toLocaleDateString('id-ID');
         // Tata krama (opsi A): memori asal-DM yang muncul di GRUP ditandai [privat]
         // → Bubu diinstruksi jangan ungkit di depan orang lain (lihat buildDynamicAwarenessContext).
-        const privateMark = (currentIsGroup && m.chatType === 'dm') ? '[privat] ' : '';
-        return `[${date}] ${privateMark}${m.summary}`;
+        const privateMark = (currentIsGroup && mem.chatType === 'dm') ? '[privat] ' : '';
+        return `[${date}] ${privateMark}${mem.summary}`;
     }).join('\n');
 };
 
@@ -167,6 +223,7 @@ const archiveSession = (chatId, session) => {
         // Persistensi "forever": summary tidak di-prune (dulu cap 10).
         storage.save('chat_summaries', summaries);
     }
+    invalidateMemoryCache();
 };
 
 const cleanExpired = () => {
