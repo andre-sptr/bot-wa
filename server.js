@@ -640,6 +640,8 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
         });
         return;
     }
+    // Atomic mark BEFORE any await so concurrent webhook+poll cannot both pass.
+    if (!force) markProcessedIncoming(payload);
 
     // Sender identification (notifyName lives in _data)
     const senderJid = isGroup ? getPayloadSenderId(payload, chatId) : chatId;
@@ -696,8 +698,6 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
                         chatId,
                         msgPreview: previewText(msgBody),
                     });
-
-                    markProcessedIncoming(payload);
 
                     await withChatLock(chatId, async () => {
                         const canonicalSenderJid = await resolveCanonicalSender(senderJid);
@@ -785,7 +785,6 @@ const processIncomingPayload = async ({ body, payload, record, source = 'webhook
         return;
     }
 
-    markProcessedIncoming(payload);
     record(`${source}-trigger-detected`, {
         trigger,
         senderName,
