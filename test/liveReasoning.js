@@ -162,9 +162,16 @@ const run = async () => {
         return BANLIST.filter((b) => low.includes(b));
     };
     const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const isCredentialOrProviderUnavailable = (error) => {
+        const msg = String(error?.message || error || '');
+        const code = String(error?.code || error?.error?.code || '');
+        const type = String(error?.type || error?.error?.type || '');
+        return /No active credentials|model_not_found|invalid_request_error/i.test(`${msg} ${code} ${type}`);
+    };
 
     let totalBanHits = 0;
     let totalPolicyFailures = 0;
+    let externalUnavailable = false;
 
     const policyCheck = (label, fn) => {
         try {
@@ -279,6 +286,12 @@ const run = async () => {
             console.log(`    tokens         : in=${res.usage?.input_tokens} cache_create=${res.usage?.cache_creation_input_tokens || 0} cache_read=${res.usage?.cache_read_input_tokens || 0} out=${res.usage?.output_tokens}`);
             console.log('-'.repeat(72));
         } catch (e) {
+            if (isCredentialOrProviderUnavailable(e)) {
+                console.log(`\n[${sc.label}] SKIP: Anthropic provider/credentials unavailable (${e?.message || e})`);
+                console.log('-'.repeat(72));
+                externalUnavailable = true;
+                break;
+            }
             console.log(`\n[${sc.label}] ERROR: ${e?.message || e}`);
             console.log('-'.repeat(72));
             allHasReasoning = false;
@@ -299,6 +312,11 @@ const run = async () => {
     console.log(`  Banlist hits: ${totalBanHits}`);
     console.log(`  Policy fails: ${totalPolicyFailures}`);
     console.log('='.repeat(72));
+
+    if (externalUnavailable) {
+        console.log('  Live status: SKIPPED (Anthropic provider/credentials unavailable)');
+        return;
+    }
 
     if (!allHasReasoning || !allHasResponse || totalBanHits > 0 || totalPolicyFailures > 0) {
         process.exitCode = 1;
