@@ -1,6 +1,4 @@
-// Webhook + poll incoming message processor.
-// Extracted from server.js processIncomingPayload (Tier-2 E).
-// Factory pattern — caller injects all server-local dependencies.
+// Webhook and poll incoming message processor extracted from server.js.
 
 const {
     getPayloadChatId,
@@ -147,7 +145,7 @@ const createWebhookProcessor = ({
             }
         }
 
-        // === Trigger detection ===
+        // Trigger detection
         const learnedFromIncoming = learnBotMentionFromIncoming(botTriggerState, payload);
         if (learnedFromIncoming.length > 0) {
             record(`${source}-incoming-bot-lid-learned`, {
@@ -159,7 +157,7 @@ const createWebhookProcessor = ({
 
         const trigger = detectMessageTrigger({ body: msgBody, payload, state: botTriggerState, isDM });
         if (!trigger) {
-            // === PROACTIVE PIPELINE (group only) ===
+            // Proactive pipeline (group only)
             if (isGroup) {
                 const category = autoCategorize(msgBody);
                 if (shouldConsiderProactive({ groupId: chatId, category, msgBody })) {

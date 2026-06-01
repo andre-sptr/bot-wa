@@ -136,9 +136,7 @@ const manageRecurringReminder = (action, param, sendWA) => {
         '`/harian senin 09:00 Stand-up meeting`';
 };
 
-// ==========================================
-// 💻 SERVER MONITOR
-// ==========================================
+// Server monitor
 
 const ALERT_COOLDOWN_MS = 30 * 60 * 1000;
 const lastAlertTime = new Map();

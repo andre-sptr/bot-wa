@@ -1,6 +1,4 @@
-// Command dispatcher factory.
-// Extracted from server.js processCommand (Tier-2 E).
-// Returns an async (msg, chatId, askAI) => string|null handler.
+// Command dispatcher factory extracted from server.js processCommand.
 
 const { getHistory, clearHistory, getStats } = require('../chatContext');
 const { summarizeConversation } = require('./aiAdvanced');

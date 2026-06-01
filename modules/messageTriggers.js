@@ -379,8 +379,7 @@ const detectMessageTrigger = ({ body = '', payload = {}, state, isDM = false }) 
     if (text.toLowerCase().includes('bubu')) return 'name';
     if (isReplyToBot(payload, state)) return 'reply';
     if (isMentionToBot(payload, text, state)) return 'mention';
-    // In a 1-on-1 chat (DM), every incoming message is implicitly addressed
-    // to the bot — no need for explicit mention/keyword trigger.
+    // In a 1-on-1 chat (DM), every incoming message is implicitly addressed to the bot.
     if (isDM) return 'dm';
     return null;
 };
