@@ -1,7 +1,3 @@
-// ==========================================
-// AI ADVANCED MODULE - Token-optimized
-// ==========================================
-
 const { getQuotedMessageContext } = require('./messageTriggers');
 
 const COIN_NAMES = new Set([

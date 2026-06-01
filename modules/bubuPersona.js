@@ -1,9 +1,3 @@
-// ==========================================
-// BUBU SYSTEM PROMPT (statis, kandidat di-cache)
-// Single source of truth, imported by server + live tests.
-// buildBubuPersona({ botPhone }) supaya nomor WA dari env bisa diinject.
-// ==========================================
-
 const buildBubuPersona = ({ botPhone = '' } = {}) => {
     const numberClause = botPhone ? ` Nomor WhatsApp kamu: ${botPhone}.` : '';
 

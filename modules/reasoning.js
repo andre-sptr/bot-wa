@@ -1,9 +1,3 @@
-// ==========================================
-// BUBU REASONING PARSER
-// Parses <reasoning>...</reasoning><response>...</response>
-// pattern that Bubu emits before every reply.
-// ==========================================
-
 const extractTag = (rawText, tag) => {
     if (!rawText) return null;
     const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
