@@ -1,3 +1,4 @@
+// Bubu system prompt (single source of truth for persona)
 const buildBubuPersona = ({ botPhone = '' } = {}) => {
     const numberClause = botPhone ? ` Nomor WhatsApp kamu: ${botPhone}.` : '';
 

@@ -1,3 +1,4 @@
+// Parses Bubu's XML-style reasoning and response tags
 const extractTag = (rawText, tag) => {
     if (!rawText) return null;
     const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
