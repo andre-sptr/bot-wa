@@ -41,7 +41,7 @@ const createWebhookProcessor = ({
     groupRosterClient,
     lidResolver, // eslint-disable-line no-unused-vars -- kept in factory contract per Tier-2E plan
     mentionCooldownStore,
-    GROUP_ID,
+    TARGET_GROUPS,
     MENTION_COOLDOWN_MS,
 }) => {
     const sendAllowedDMs = async ({ dms, knownTargets, record, source, blockedStage }) => {
@@ -62,7 +62,7 @@ const createWebhookProcessor = ({
         const _data = payload._data || {};
         const chatId = getPayloadChatId(payload);
         const isGroup = chatId.endsWith('@g.us');
-        const isTargetGroup = Boolean(GROUP_ID && chatId === GROUP_ID);
+        const isTargetGroup = Boolean(TARGET_GROUPS && TARGET_GROUPS.includes(chatId));
         // DM covers both legacy @c.us and modern @lid chat IDs from WAHA (not group/broadcast/newsletter).
         const isDM = !isGroup
             && !chatId.endsWith('@broadcast')
@@ -72,7 +72,7 @@ const createWebhookProcessor = ({
         if (!isDM && !isTargetGroup) {
             record(`${source}-chat-filtered`, {
                 reason: 'chat is neither target group nor DM',
-                expectedGroupId: GROUP_ID,
+                expectedGroups: TARGET_GROUPS,
                 actualChatId: chatId,
                 payload: summarizePayload(body, payload, chatId),
             });

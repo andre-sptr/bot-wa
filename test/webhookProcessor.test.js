@@ -32,7 +32,7 @@ test('createWebhookProcessor returns a function', () => {
         groupRosterClient: null,
         lidResolver: null,
         mentionCooldownStore: { get: () => 0, set: () => {} },
-        GROUP_ID: 'test@g.us',
+        TARGET_GROUPS: ['test@g.us'],
         MENTION_COOLDOWN_MS: 5000,
     });
     assert.equal(typeof fn, 'function');
@@ -58,7 +58,7 @@ test('processIncomingPayload: drops non-DM non-group chat with record', async ()
         groupRosterClient: null,
         lidResolver: null,
         mentionCooldownStore: { get: () => 0, set: () => {} },
-        GROUP_ID: 'expected-target@g.us',
+        TARGET_GROUPS: ['expected-target@g.us'],
         MENTION_COOLDOWN_MS: 5000,
     });
 
@@ -102,7 +102,7 @@ test('processIncomingPayload: proactive reply with dm tag does not throw', async
         groupRosterClient: null,
         lidResolver: null,
         mentionCooldownStore: { get: () => 0, set: () => {} },
-        GROUP_ID: groupId,
+        TARGET_GROUPS: [groupId],
         MENTION_COOLDOWN_MS: 5000,
     });
 

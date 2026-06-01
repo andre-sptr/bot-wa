@@ -39,7 +39,7 @@ app.use(express.json());
 const WAHA_URL = process.env.WAHA_URL;
 const WAHA_SESSION = process.env.WAHA_SESSION;
 const WAHA_API_KEY = process.env.WAHA_API_KEY;
-const GROUP_ID = process.env.GROUP_ID;
+const TARGET_GROUPS = (process.env.GROUP_ID || "").split(",").map(id => id.trim()).filter(Boolean);
 const BOT_PHONE = process.env.BOT_PHONE?.replace(/\D/g, '') || '';
 const BOT_LID = process.env.BOT_LID?.replace(/@lid$/i, '') || '';
 const PORT = process.env.PORT || 3000;
@@ -240,7 +240,7 @@ const debugStatus = () => ({
         port: PORT,
         wahaUrl: safeWahaUrl(),
         wahaSession: WAHA_SESSION || null,
-        groupId: GROUP_ID || null,
+        targetGroups: TARGET_GROUPS,
         botPhone: maskPhone(BOT_PHONE),
         botLid: BOT_LID || null,
         anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
@@ -300,7 +300,7 @@ const analyzeWahaMessage = (payload = {}, chat = null) => {
     };
 };
 
-const sendWA = async (text, chatId = GROUP_ID, mentions = []) => {
+const sendWA = async (text, chatId = TARGET_GROUPS[0], mentions = []) => {
     try {
         const body = {
             session: WAHA_SESSION,
@@ -399,7 +399,7 @@ const processIncomingPayload = createWebhookProcessor({
     groupRosterClient,
     lidResolver,
     mentionCooldownStore,
-    GROUP_ID,
+    TARGET_GROUPS,
     MENTION_COOLDOWN_MS,
 });
 
@@ -542,11 +542,11 @@ app.post('/debug/waha/process-latest', requireDebugAccess, async (req, res) => {
         const limit = Math.min(parseInt(req.query.limit || '10', 10) || 10, 50);
         const data = await wahaGet(`/api/${WAHA_SESSION}/chats`, { limit });
         const chats = Array.isArray(data) ? data : [];
-        const target = chats.find(chat => getPayloadChatId(chat.lastMessage || {}) === GROUP_ID);
+        const target = chats.find(chat => TARGET_GROUPS.includes(getPayloadChatId(chat.lastMessage || {})));
 
         if (!target?.lastMessage) {
-            record('manual-process-missing-target', { groupId: GROUP_ID, count: chats.length });
-            return res.status(404).json({ ...debugStatus(), error: `No lastMessage found for ${GROUP_ID}` });
+            record('manual-process-missing-target', { groupId: TARGET_GROUPS, count: chats.length });
+            return res.status(404).json({ ...debugStatus(), error: `No lastMessage found for ${TARGET_GROUPS}` });
         }
 
         await processIncomingPayload({
@@ -599,7 +599,7 @@ const pollWahaChats = async () => {
             .filter(item => {
                 if (!item.payload) return false;
                 const cid = getPayloadChatId(item.payload);
-                if (cid === GROUP_ID) return true; // target group
+                if (TARGET_GROUPS.includes(cid)) return true; // target group
                 // DM: not a group, not broadcast, not newsletter
                 if (cid.endsWith('@g.us')) return false;
                 if (cid.endsWith('@broadcast')) return false;

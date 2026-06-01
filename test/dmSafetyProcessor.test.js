@@ -36,7 +36,7 @@ test('processIncomingPayload: allows triggered dm to roster target and blocks un
         },
         lidResolver: null,
         mentionCooldownStore: { get: () => 0, set: () => {} },
-        GROUP_ID: groupId,
+        TARGET_GROUPS: [groupId],
         MENTION_COOLDOWN_MS: 5000,
     });
 
