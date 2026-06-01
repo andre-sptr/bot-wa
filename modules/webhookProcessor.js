@@ -20,6 +20,11 @@ const {
 } = require('./proactiveGuard');
 const { withChatLock } = require('../chatContext');
 const { extractDMs, stripDMTags } = require('./reasoning');
+const {
+    collectKnownDmTargets,
+    splitAllowedDMs,
+    appendBlockedDmNotice,
+} = require('./dmSafety');
 const { extractMentionIntents, formatMentionedReply } = require('./mentionHelper');
 const { previewText } = require('./webhookDebug');
 
@@ -41,6 +46,20 @@ const createWebhookProcessor = ({
     GROUP_ID,
     MENTION_COOLDOWN_MS,
 }) => {
+    const sendAllowedDMs = async ({ dms, knownTargets, record, source, blockedStage }) => {
+        const { allowed, blocked } = splitAllowedDMs(dms, knownTargets);
+        for (const dm of allowed) {
+            await sendWA(dm.message, dm.target);
+            record(`${source}-dm-sent`, { target: dm.target, preview: previewText(dm.message) });
+        }
+        if (blocked.length > 0) {
+            record(`${source}-${blockedStage}`, {
+                blocked: blocked.map(dm => dm.target),
+            });
+        }
+        return { allowed, blocked };
+    };
+
     return async ({ body, payload, record, source = 'webhook', force = false }) => {
         const _data = payload._data || {};
         const chatId = getPayloadChatId(payload);
@@ -177,14 +196,20 @@ const createWebhookProcessor = ({
 
                             if (dms.length > 0) {
                                 record(`${source}-proactive-dms-detected`, { count: dms.length });
-                                for (const dm of dms) {
-                                    let target = dm.target;
-                                    if (!target.includes('@')) {
-                                        target += '@c.us';
-                                    }
-                                    await sendWA(dm.message, target);
-                                    record(`${source}-proactive-dm-sent`, { target, preview: previewText(dm.message) });
-                                }
+                                const knownTargets = collectKnownDmTargets({
+                                    chatId,
+                                    senderJid,
+                                    canonicalSenderJid,
+                                    roster,
+                                });
+                                const { blocked } = await sendAllowedDMs({
+                                    dms,
+                                    knownTargets,
+                                    record,
+                                    source,
+                                    blockedStage: 'proactive-dm-blocked',
+                                });
+                                reply = appendBlockedDmNotice(reply, blocked);
                             }
 
                             if (!reply) return; // If the reply was only DMs, don't send an empty message
@@ -273,14 +298,20 @@ const createWebhookProcessor = ({
 
             if (dms.length > 0) {
                 record(`${source}-dms-detected`, { count: dms.length });
-                for (const dm of dms) {
-                    let target = dm.target;
-                    if (!target.includes('@')) {
-                        target += '@c.us';
-                    }
-                    await sendWA(dm.message, target);
-                    record(`${source}-dm-sent`, { target, preview: previewText(dm.message) });
-                }
+                const knownTargets = collectKnownDmTargets({
+                    chatId,
+                    senderJid,
+                    canonicalSenderJid,
+                    roster,
+                });
+                const { blocked } = await sendAllowedDMs({
+                    dms,
+                    knownTargets,
+                    record,
+                    source,
+                    blockedStage: 'dm-blocked',
+                });
+                reply = appendBlockedDmNotice(reply, blocked);
             }
 
             if (!reply) return; // If the reply was only DMs, don't send an empty message to the chat

@@ -118,9 +118,11 @@ test('processIncomingPayload: proactive reply with dm tag does not throw', async
         source: 'test',
     }));
 
-    assert.deepEqual(sent.map(s => s.chatId), ['628111@c.us', groupId]);
-    assert.equal(sent[0].text, 'pesan rahasia');
-    assert.equal(sent[1].text, 'Balasan grup');
+    // Tier-3 A: 628111 is neither the sender nor a roster member → DM blocked,
+    // and the reply to the group carries a notice instead of a silent DM.
+    assert.deepEqual(sent.map(s => s.chatId), [groupId]);
+    assert.match(sent[0].text, /Balasan grup/);
+    assert.match(sent[0].text, /belum bisa DM 628111@c\.us/);
 });
 
 test.after(() => {
