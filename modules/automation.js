@@ -2,9 +2,6 @@ const storage = require('./storage');
 const cron = require('node-cron');
 const axios = require('axios');
 
-// ==========================================
-// ⏰ RECURRING REMINDERS
-// ==========================================
 const activeReminderJobs = new Map();
 
 const DAY_MAP = {

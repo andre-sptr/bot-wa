@@ -63,8 +63,7 @@ const createWebhookProcessor = ({
         const chatId = getPayloadChatId(payload);
         const isGroup = chatId.endsWith('@g.us');
         const isTargetGroup = Boolean(GROUP_ID && chatId === GROUP_ID);
-        // DM = anything that is NOT a group, broadcast, or newsletter.
-        // Covers both legacy @c.us and modern @lid DM chat IDs from WAHA.
+        // DM covers both legacy @c.us and modern @lid chat IDs from WAHA (not group/broadcast/newsletter).
         const isDM = !isGroup
             && !chatId.endsWith('@broadcast')
             && !chatId.endsWith('@newsletter')
