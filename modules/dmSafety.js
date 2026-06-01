@@ -5,18 +5,14 @@
 const normalizeDmTarget = (target) => {
     const raw = String(target || '').trim();
     if (!raw) return '';
-    const lower = raw.toLowerCase();
-    if (lower.endsWith('@lid')) return '';
-    if (lower.endsWith('@s.whatsapp.net')) {
-        const phone = raw.slice(0, -'@s.whatsapp.net'.length).replace(/\D/g, '');
-        return phone ? `${phone}@c.us` : '';
-    }
-    if (lower.endsWith('@c.us')) {
-        const phone = raw.slice(0, -'@c.us'.length).replace(/\D/g, '');
-        return phone ? `${phone}@c.us` : '';
-    }
-    const phone = raw.replace(/\D/g, '');
-    return phone ? `${phone}@c.us` : '';
+
+    const canonical = raw.match(/^(\d+)@c\.us$/i);
+    if (canonical) return `${canonical[1]}@c.us`;
+
+    const whatsapp = raw.match(/^(\d+)@s\.whatsapp\.net$/i);
+    if (whatsapp) return `${whatsapp[1]}@c.us`;
+
+    return '';
 };
 
 const addKnown = (set, value) => {
