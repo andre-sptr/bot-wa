@@ -1,10 +1,5 @@
-// ==========================================
-// MENTION HELPER MODULE — Fase 6
-// Extract, resolve, and format @mentions
-// for WAHA sendText mentions array.
-// ==========================================
+// Extract, resolve, and format @mentions for WAHA sendText mentions array.
 
-// ── phoneMentionable ─────────────────────────────────────────────
 
 /**
  * Check if a participant ID is phone-based (mentionable via WAHA).
@@ -27,11 +22,9 @@ const phoneMentionable = (participantId) => {
     return null;
 };
 
-// ── Blocked mention targets ──────────────────────────────────────
 
 const TAG_ALL_KEYWORDS = new Set(['all', 'everyone', 'semua']);
 
-// ── extractMentionIntents ────────────────────────────────────────
 
 /**
  * Build lookup maps from roster participants for fast matching.
@@ -120,7 +113,6 @@ const extractMentionIntents = (text, participants) => {
     return intents;
 };
 
-// ── formatMentionedReply ─────────────────────────────────────────
 
 /**
  * Replace @NamaOrang with @phone in text and build WAHA mentions array.
@@ -171,7 +163,6 @@ const formatMentionedReply = (text, intents) => {
     return { text: formatted, mentions };
 };
 
-// ── guardMentions ────────────────────────────────────────────────
 
 /**
  * Safety guard: cap mention count and validate JID format.

@@ -1,9 +1,4 @@
-// ==========================================
-// LID RESOLVER — Gap #1 (unified cross-context)
-// Resolve @lid (identitas sender grup) → @c.us (nomor kanonik),
-// supaya orang yang sama dikenali lintas DM & grup.
-// WAHA: GET /api/{session}/lids/{lid} → { pn: "628...@c.us" }
-// ==========================================
+// Resolve @lid (group sender identity) to @c.us (canonical number) for cross-context recognition.
 
 const createLidResolver = ({ wahaUrl, session, apiKey, httpGet }) => {
     // lid (lowercase) -> pn '@c.us'. Hanya sukses yang di-cache (stabil);

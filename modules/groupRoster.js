@@ -1,11 +1,6 @@
-// ==========================================
-// GROUP ROSTER MODULE — Fase 5
-// Fetch + cache grup participants via WAHA.
-// ==========================================
+// Group roster module to fetch and cache group participants via WAHA.
 
 const storage = require('./storage');
-
-// ── Pure helpers ─────────────────────────────────────────────────
 
 /**
  * Normalize group ID to a safe storage key.
@@ -51,7 +46,6 @@ const pickContactName = (data) => {
     return String(data.name || data.pushname || data.shortName || '').trim();
 };
 
-// ── Storage helpers ──────────────────────────────────────────────
 
 /**
  * Save normalized roster to storage.
@@ -77,7 +71,6 @@ const loadRoster = (groupId) => {
     return data;
 };
 
-// ── WAHA client ──────────────────────────────────────────────────
 
 /**
  * Factory: create a group roster client with injected HTTP getter.
@@ -123,7 +116,6 @@ const createGroupRosterClient = ({ wahaUrl, session, apiKey, httpGet }) => {
     };
 };
 
-// ── Fetch + cache combo ──────────────────────────────────────────
 
 /**
  * Fetch participants from WAHA, normalize, and save to storage.

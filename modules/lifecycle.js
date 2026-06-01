@@ -1,5 +1,4 @@
-// Graceful shutdown registry. Hook order: LIFO (last registered runs first).
-// Errors di satu hook tidak menghentikan hook lain.
+// Graceful shutdown registry: executes hooks in LIFO order without halting on individual errors.
 
 const hooks = [];
 let isShuttingDown = false;
@@ -14,8 +13,7 @@ const shutdown = async (signal = 'SIGTERM') => {
     isShuttingDown = true;
     console.log(`[Lifecycle] shutdown start (${signal}), ${hooks.length} hooks`);
 
-    // LIFO: hook terakhir di-register harus berhenti duluan
-    // (mis. polling interval di-register setelah express listen).
+    // LIFO: recently registered hooks shut down first.
     for (let i = hooks.length - 1; i >= 0; i--) {
         const { name, fn } = hooks[i];
         try {
@@ -37,7 +35,7 @@ const installSignalHandlers = ({ exit = true } = {}) => {
     process.on('SIGINT', handle('SIGINT'));
 };
 
-// Test helper: reset state antara test run (tidak diekspos sebagai API publik).
+// Test helper: resets state between test runs.
 const _resetForTests = () => {
     hooks.length = 0;
     isShuttingDown = false;

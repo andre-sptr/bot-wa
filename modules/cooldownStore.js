@@ -1,5 +1,4 @@
-// Persisted cooldown store. Generic helper: load from storage at construct time,
-// auto-drop expired entries, persist on every set/delete.
+// Persisted cooldown store: loads from storage at construct time, auto-drops expired entries, and persists on every set/delete.
 
 const storage = require('./storage');
 

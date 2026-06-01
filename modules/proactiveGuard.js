@@ -1,12 +1,7 @@
-// ==========================================
-// PROACTIVE GUARD MODULE — Fase 7
-// Kill-switch, pre-filter, cooldown, skip gate
-// for proactive group behavior.
-// ==========================================
+// Kill-switch, pre-filter, cooldown, and skip gate for proactive group behavior.
 
 const storage = require('./storage');
 
-// ── Constants ────────────────────────────────────────────────────
 
 const PROACTIVE_COOLDOWN_MS = 300_000; // 5 minutes per group
 const PROACTIVE_SKIP_MARKER = '[SKIP]';
@@ -18,7 +13,6 @@ const MIN_MSG_LENGTH = 8; // ignore very short messages like "ok?", "wkwk"
  */
 const PROACTIVE_CATEGORIES = new Set(['PERTANYAAN', 'DISKUSI']);
 
-// ── Kill-switch state (persisted via storage) ────────────────────
 
 const stateKey = (groupId) => `proactive_state_${String(groupId).replace(/@g\.us$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
@@ -43,7 +37,6 @@ const saveProactiveState = (groupId, enabled) => {
  */
 const isProactiveEnabled = (groupId) => loadProactiveState(groupId);
 
-// ── Pre-filter ───────────────────────────────────────────────────
 
 /**
  * Determine if a group message should be considered for proactive response.
@@ -65,7 +58,6 @@ const shouldConsiderProactive = ({ groupId, category, msgBody }) => {
     return true;
 };
 
-// ── Cooldown (persisted; in-memory mirror) ───────────────────────
 
 const COOLDOWN_STORAGE_KEY = 'proactive_cooldowns';
 
