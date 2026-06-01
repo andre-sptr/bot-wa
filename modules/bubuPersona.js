@@ -108,4 +108,6 @@ Ga perlu ulang isi reasoning di sini.
 Hanya isi <response> yang dikirim ke user. Reasoning internal, tidak terlihat.`;
 };
 
-module.exports = { buildBubuPersona };
+const getActivePersonaName = () => 'Bubu';
+
+module.exports = { buildBubuPersona, getActivePersonaName };

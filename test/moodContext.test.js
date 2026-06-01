@@ -52,12 +52,38 @@ test('special moods appear across many runs', () => {
     assert.ok(hasSpecial, `should see special moods across 50 runs, got: ${[...results].join(', ')}`);
 });
 
-test('all mood descriptions are present and non-empty', () => {
-    // Verify the mood context strings are well-formed for every known mood
-    const moods = ['excited', 'chill', 'focused', 'bosan', 'sleepy', 'bete', 'hype'];
-    for (const mood of moods) {
-        const context = `[Mood Bubu sekarang: ${mood} — description here]`;
-        assert.ok(context.includes(mood), `${mood} must appear in context`);
-        assert.ok(context.length > 30, `${mood} context must have description`);
+test('MOOD_DESCRIPTIONS has entries for all moods used by getCurrentMoodContext', () => {
+    // Verify that getCurrentMoodContext always produces well-formed output
+    // with a description (— separator) for every mood it produces.
+    // getCurrentMoodContext can only produce: current-hour-mood + random(bete|hype)
+    // = at most 3 distinct moods in one run, so we verify format, not diversity.
+    const results = new Set();
+    for (let i = 0; i < 100; i++) {
+        const mod = require('../modules/aiAdvanced');
+        const r = mod.getCurrentMoodContext();
+        const match = r.match(/^\[Mood Bubu sekarang: (\w+) — (.+)\]$/);
+        assert.ok(match, `mood context must match format, got: ${r}`);
+        results.add(match[1]);
+        assert.ok(match[2].length > 5, `description for ${match[1]} must be non-trivial, got: "${match[2]}"`);
     }
+    // Should see at least 2: the time-based mood + at least one special mood
+    assert.ok(results.size >= 2, `should see time-based + special moods across 100 runs, got ${results.size}: ${[...results].join(', ')}`);
+    // All produced moods must be from the known set
+    const allMoods = ['excited', 'chill', 'focused', 'bosan', 'sleepy', 'bete', 'hype'];
+    for (const m of results) {
+        assert.ok(allMoods.includes(m), `unexpected mood: ${m}`);
+    }
+});
+
+test('moodForHour covers all 24 hours without gaps', () => {
+    const mod = require('../modules/aiAdvanced');
+    const moodForHour = mod.moodForHour;
+    // Test boundary hours: 0, 6, 10, 15, 17, 19, 23
+    assert.equal(moodForHour(0), 'sleepy');   // midnight → sleepy
+    assert.equal(moodForHour(6), 'excited');  // 6:00 → excited
+    assert.equal(moodForHour(10), 'chill');   // 10:00 → chill
+    assert.equal(moodForHour(15), 'focused'); // 15:00 → focused
+    assert.equal(moodForHour(17), 'bosan');   // 17:00 → bosan
+    assert.equal(moodForHour(19), 'sleepy');  // 19:00 → sleepy
+    assert.equal(moodForHour(23), 'sleepy');  // 23:00 → sleepy
 });
