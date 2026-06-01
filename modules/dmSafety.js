@@ -1,6 +1,4 @@
-// Safety guard for AI-emitted <dm target="..."> tags.
-// Only sends DM to contacts known from current DM, current sender, canonical sender,
-// or group roster participants. Unknown targets are blocked and surfaced to chat.
+// Safety guard for AI-emitted DM targets. Only allows known contacts (current DM/sender, group roster) and blocks unknown targets.
 
 const normalizeDmTarget = (target) => {
     const raw = String(target || '').trim();

@@ -1,4 +1,4 @@
-// Crypto + Kurs helpers. Pure functions, no shared state.
+
 
 const axios = require('axios');
 
