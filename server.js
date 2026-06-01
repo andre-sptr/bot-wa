@@ -8,8 +8,8 @@ const {
     classifyIntent,
     autoCategorize,
     contextAwareResponse,
+    getCurrentMoodContext,
 } = require('./modules/aiAdvanced');
-const { getPersonaPrompt } = require('./modules/aiFeatures');
 const { loadAndStartReminders, checkAllServers } = require('./modules/automation');
 const {
     createBotTriggerState,
@@ -84,8 +84,8 @@ const formatForWhatsApp = (text) => {
 
 const makeAskAI = (chatId, senderName, senderJid = null) => async (systemPrompt, userMessage, useContext = true) => {
     try {
-        const personaExtra = getPersonaPrompt();
-        const staticSystemText = `${BUBU_PERSONA}\n\nGaya bicara: ${personaExtra}`;
+        const moodContext = getCurrentMoodContext();
+        const staticSystemText = `${BUBU_PERSONA}\n\n${moodContext}\n`;
         const systemBlocks = buildSystemBlocks(staticSystemText, systemPrompt);
 
         const messages = [];

@@ -3,11 +3,10 @@
 require('dotenv').config({ override: true });
 const assert = require('node:assert/strict');
 const Anthropic = require('@anthropic-ai/sdk');
-const { getPersonaPrompt, getActivePersonaName } = require('../modules/aiFeatures');
 const { parseBubuReply } = require('../modules/reasoning');
 const { buildBubuPersona } = require('../modules/bubuPersona');
 const { buildSystemBlocks } = require('../modules/systemBlocks');
-const { buildDynamicAwarenessContext } = require('../modules/aiAdvanced');
+const { buildDynamicAwarenessContext, getCurrentMoodContext } = require('../modules/aiAdvanced');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const BUBU_PERSONA = buildBubuPersona({ botPhone: process.env.BOT_PHONE?.replace(/\D/g, '') || '' });
@@ -124,11 +123,10 @@ const SCENARIOS = [
 const run = async () => {
     const model = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
     const botPhone = process.env.BOT_PHONE?.replace(/\D/g, '') || '';
-    const personaExtra = getPersonaPrompt();
-    const staticSystemText = `${BUBU_PERSONA}\n\nGaya bicara: ${personaExtra}`;
+    const moodContext = getCurrentMoodContext();
+    const staticSystemText = `${BUBU_PERSONA}\n\n${moodContext}\n`;
 
     console.log(`\nModel: ${model}`);
-    console.log(`Active persona: ${getActivePersonaName()}`);
     console.log(`Static system prompt size: ${staticSystemText.length} chars\n`);
     console.log('='.repeat(72));
 

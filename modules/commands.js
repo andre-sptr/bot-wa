@@ -2,7 +2,7 @@
 
 const { getHistory, clearHistory, getStats } = require('../chatContext');
 const { summarizeConversation } = require('./aiAdvanced');
-const { getActivePersonaName } = require('./aiFeatures');
+const { getActivePersonaName } = require('./bubuPersona');
 const { manageRecurringReminder, manageServerMonitor } = require('./automation');
 const { fetchAndCacheRoster } = require('./groupRoster');
 const { saveProactiveState } = require('./proactiveGuard');
