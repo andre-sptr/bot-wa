@@ -10,9 +10,6 @@ const SUMMARY_THRESHOLD = 6;
 
 let sessions = storage.load('sessions', {});
 
-// ==========================================
-// Per-chat lock (race condition prevention)
-// ==========================================
 const chatLocks = new Map();
 
 const withChatLock = async (chatId, fn) => {
@@ -31,9 +28,6 @@ const withChatLock = async (chatId, fn) => {
     }
 };
 
-// ==========================================
-// Topic extraction (local, no AI cost)
-// ==========================================
 const STOP_WORDS = new Set([
     'yang', 'dan', 'atau', 'untuk', 'dengan', 'dari', 'ini', 'itu',
     'ada', 'tidak', 'bisa', 'juga', 'akan', 'sudah', 'kalau', 'tapi',
@@ -66,9 +60,6 @@ const extractTopics = (messages) => {
     return result;
 };
 
-// ==========================================
-// Session memory (long-term recall)
-// ==========================================
 const generateLocalSummary = (history) => {
     const userMsgs = history.filter(m => m.role === 'user');
     const participants = [...new Set(userMsgs.filter(m => m.sender).map(m => m.sender))];
@@ -116,10 +107,8 @@ const saveSessionMemory = (chatId, session) => {
     invalidateMemoryCache();
 };
 
-// ==========================================
 // Memory cache + index (Task G).
 // Lazy-built, invalidated on saveSessionMemory.
-// ==========================================
 
 // Helper backward-compat: legacy topics: array → treat each word as TF=1.
 // New topics: object {word: count}.
@@ -227,9 +216,6 @@ const getRelevantMemory = (chatId, currentMessage, senderJid = null) => {
     }).join('\n');
 };
 
-// ==========================================
-// Session lifecycle
-// ==========================================
 const archiveSession = (chatId, session) => {
     saveSessionMemory(chatId, session);
 

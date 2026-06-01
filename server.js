@@ -35,9 +35,7 @@ const lifecycle = require('./modules/lifecycle');
 const app = express();
 app.use(express.json());
 
-// ==========================================
-// 1. KONFIGURASI
-// ==========================================
+// Section: KONFIGURASI
 const WAHA_URL = process.env.WAHA_URL;
 const WAHA_SESSION = process.env.WAHA_SESSION;
 const WAHA_API_KEY = process.env.WAHA_API_KEY;
@@ -60,9 +58,7 @@ const anthropic = new Anthropic({
 
 const webhookDebug = createDebugStore({ maxEntries: 100 });
 
-// ==========================================
-// 2. RATE LIMITER
-// ==========================================
+// Section: RATE LIMITER
 const rateLimitMap = new Map();
 const RATE_LIMIT_MS = 3000;
 
@@ -80,9 +76,7 @@ const isRateLimited = (userId) => {
     return false;
 };
 
-// ==========================================
-// 4. AI ENGINE
-// ==========================================
+// Section: AI ENGINE
 const formatForWhatsApp = (text) => {
     if (!text) return text;
     return text.replace(/\*\*(.+?)\*\*/g, '*$1*');
@@ -156,9 +150,7 @@ const makeAskAI = (chatId, senderName, senderJid = null) => async (systemPrompt,
     }
 };
 
-// ==========================================
-// 5. KIRIM WA + track sent message IDs for reply detection
-// ==========================================
+// Section: KIRIM WA + track sent message IDs for reply detection
 const botTriggerState = createBotTriggerState({ botPhone: BOT_PHONE, botLid: BOT_LID });
 
 const groupRosterClient = (WAHA_URL && WAHA_SESSION) ? createGroupRosterClient({
@@ -347,9 +339,7 @@ const sendWA = async (text, chatId = GROUP_ID, mentions = []) => {
 
 const processCommand = createCommandHandler({ sendWA, groupRosterClient });
 
-// ==========================================
-// 7. NATURAL LANGUAGE HANDLER
-// ==========================================
+// Section: NATURAL LANGUAGE HANDLER
 const CATEGORY_EMOJI = {
     URGENT: '!', REQUEST: '',
     PERTANYAAN: '', DISKUSI: '',
@@ -378,9 +368,7 @@ const handleNaturalLanguage = async (msg, chatId, senderName, askAI, chatContext
     }
 };
 
-// ==========================================
-// 8. SCHEDULER
-// ==========================================
+// Section: SCHEDULER
 cron.schedule('30 06 * * *', async () => {
     console.log('[CRON] Running Morning Brief...');
     const coins = ['bitcoin', 'ethereum', 'solana', 'binancecoin', 'tether-gold'];
@@ -394,9 +382,7 @@ cron.schedule('30 06 * * *', async () => {
     await sendWA(brief);
 }, { timezone: 'Asia/Jakarta' });
 
-// ==========================================
-// 9. WEBHOOK
-// ==========================================
+// Section: WEBHOOK
 
 const processIncomingPayload = createWebhookProcessor({
     sendWA,
@@ -646,9 +632,7 @@ const pollWahaChats = async () => {
     }
 };
 
-// ==========================================
-// 10. INIT
-// ==========================================
+// Section: INIT
 loadAndStartReminders(sendWA);
 
 let pollInterval = null;
