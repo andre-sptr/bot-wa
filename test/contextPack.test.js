@@ -96,11 +96,13 @@ test('renderContextPackForPrompt includes proactive instructions', () => {
 test('renderContextPackForPrompt includes roster summary when available', () => {
     const pack = buildContextPack({
         chatId: '120@g.us',
-        roster: { participants: [{ id: '1@lid', name: 'Andre' }, { id: '2@lid', name: 'Budi' }] },
+        roster: { participants: [{ id: '628111@c.us', name: 'Andre' }, { id: '628222@c.us', name: 'Budi' }] },
     });
     const rendered = renderContextPackForPrompt(pack);
     assert.match(rendered, /2 anggota/);
-    assert.match(rendered, /Andre/);
+    assert.match(rendered, /Andre \(628111@c\.us\)/);
+    assert.match(rendered, /BOLEH dipakai untuk <dm target="\.\.\.">/);
+    assert.match(rendered, /gunakan ID persis dari tanda kurung sebagai target DM/);
 });
 
 test('renderContextPackForPrompt includes quoted message text', () => {

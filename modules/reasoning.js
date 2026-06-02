@@ -49,22 +49,21 @@ const stripDMTags = (text) => {
 const ensureResponseSafety = (text, isGroup = false) => {
     if (!text) return text;
 
-    // 1. Check for raw XML tag leakage that stripTagResidue might have missed
-    // (e.g. malformed tags or the model outputting them deliberately outside the wrapper)
+    // Raw control tags must never reach WhatsApp.
     const hasXmlLeakage = /<reasoning|<\/reasoning|<response|<\/response|<dm/i.test(text);
-
-    // 2. Check for internal IDs leakage (JIDs)
-    const hasJidLeakage = /@c\.us|@g\.us|@lid/i.test(text);
-
-    // 3. Check for private memory flag leakage in group context
     const hasPrivatLeakage = isGroup && /\[privat\]/i.test(text);
 
-    if (hasXmlLeakage || hasJidLeakage || hasPrivatLeakage) {
-        console.error('[Safety] Response blocked due to context leakage:', { hasXmlLeakage, hasJidLeakage, hasPrivatLeakage });
+    if (hasXmlLeakage || hasPrivatLeakage) {
+        console.error('[Safety] Response blocked due to context leakage:', { hasXmlLeakage, hasPrivatLeakage });
         return 'Bubu nangkap maksudnya, tapi mending kita bahas detailnya nanti ya.';
     }
 
-    return text;
+    // JIDs are useful internally but ugly/sensitive in user-facing confirmation text.
+    // Sanitize instead of blocking, because a normal DM confirmation may mention the target.
+    return text
+        .replace(/\b\d{5,20}@c\.us\b/gi, 'kontak itu')
+        .replace(/\b[\w.-]+@lid\b/gi, 'kontak itu')
+        .replace(/\b[\w.-]+@g\.us\b/gi, 'grup ini');
 };
 
 module.exports = {

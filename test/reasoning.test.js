@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseBubuReply, extractTag, stripTagResidue } = require('../modules/reasoning');
+const { parseBubuReply, extractTag, stripTagResidue, ensureResponseSafety } = require('../modules/reasoning');
 
 test('parses well-formed reasoning + response', () => {
     const raw = `<reasoning>
@@ -106,4 +106,17 @@ test('whitespace around response tag is trimmed', () => {
     const raw = `<response>   \n  Halo banget!   \n  </response>`;
     const { response } = parseBubuReply(raw);
     assert.equal(response, 'Halo banget!');
+});
+
+test('ensureResponseSafety sanitizes JIDs instead of blocking normal DM confirmations', () => {
+    const safe = ensureResponseSafety('Oke, Bubu DM 628111@c.us sekarang ya.', true);
+    assert.match(safe, /Oke/);
+    assert.match(safe, /kontak itu/);
+    assert.doesNotMatch(safe, /@c\.us/);
+    assert.doesNotMatch(safe, /mending kita bahas detailnya nanti/);
+});
+
+test('ensureResponseSafety still blocks raw control tags', () => {
+    const safe = ensureResponseSafety('Halo <reasoning>internal</reasoning>', true);
+    assert.match(safe, /mending kita bahas detailnya nanti/);
 });

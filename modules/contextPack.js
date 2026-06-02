@@ -114,6 +114,8 @@ const renderContextPackForPrompt = (pack) => {
 
     if (pack.roster?.summary) {
         lines.push(`- Anggota grup: ${pack.roster.summary}.`);
+        lines.push('- ID dalam tanda kurung adalah nomor/JID yang BOLEH dipakai untuk <dm target="..."> kalau user minta DM anggota grup itu.');
+        lines.push('- Kalau user minta DM seseorang di grup, cari namanya di daftar anggota lalu gunakan ID persis dari tanda kurung sebagai target DM.');
         lines.push('- Kalau perlu nge-tag seseorang, tulis @NamaOrang di pesanmu. Tag HANYA kalau relevan.');
         lines.push('- Kalau diminta tag semua orang, tulis @all di pesanmu.');
     }
