@@ -156,3 +156,18 @@ test('renderContextPackForPrompt includes operational time context', () => {
     assert.match(rendered, /Hari:/);
     assert.match(rendered, /Sesi:/);
 });
+
+test('renderContextPackForPrompt tells Bubu how to DM the current sender', () => {
+    const pack = buildContextPack({
+        chatId: '120@g.us',
+        senderJid: '123@lid',
+        canonicalSenderJid: '628222@c.us',
+        senderName: 'Rina',
+        messageText: 'dm gue nanti ya',
+    });
+    const rendered = renderContextPackForPrompt(pack);
+    assert.equal(pack.sender.canonicalJid, '628222@c.us');
+    assert.match(rendered, /Nomor DM pengirim saat ini: 628222@c\.us/);
+    assert.match(rendered, /user minta DM dirinya sendiri/);
+    assert.match(rendered, /<dm target="628222@c\.us">/);
+});

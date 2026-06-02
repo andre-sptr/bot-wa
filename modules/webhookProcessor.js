@@ -146,18 +146,6 @@ const createWebhookProcessor = ({
         }
 
         const trigger = detectMessageTrigger({ body: msgBody, payload, state: botTriggerState, isDM });
-
-        // Build structured context pack
-        const contextPack = buildContextPack({
-            chatId,
-            senderJid,
-            senderName,
-            payload,
-            roster,
-            messageText: msgBody,
-            trigger: trigger || 'proactive',
-            proactiveMode: !trigger,
-        });
         if (!trigger) {
             // Proactive pipeline (group only)
             if (isGroup) {
@@ -175,6 +163,17 @@ const createWebhookProcessor = ({
                         await withChatLock(chatId, async () => {
                             const canonicalSenderJid = await resolveCanonicalSender(senderJid);
                             const askAI = makeAskAI(chatId, senderName, canonicalSenderJid);
+                            const contextPack = buildContextPack({
+                                chatId,
+                                senderJid,
+                                canonicalSenderJid,
+                                senderName,
+                                payload,
+                                roster,
+                                messageText: msgBody,
+                                trigger: 'proactive',
+                                proactiveMode: true,
+                            });
 
                             let reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, contextPack, canonicalSenderJid);
 
@@ -274,6 +273,17 @@ const createWebhookProcessor = ({
         await withChatLock(chatId, async () => {
             const canonicalSenderJid = await resolveCanonicalSender(senderJid);
             const askAI = makeAskAI(chatId, senderName, canonicalSenderJid);
+            const contextPack = buildContextPack({
+                chatId,
+                senderJid,
+                canonicalSenderJid,
+                senderName,
+                payload,
+                roster,
+                messageText: msgBody,
+                trigger,
+                proactiveMode: false,
+            });
 
             let reply = null;
             if (trigger === 'cmd') {

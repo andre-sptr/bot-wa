@@ -9,6 +9,7 @@ const firstText = (...values) => values.find((value) => typeof value === 'string
 const buildContextPack = ({
     chatId = '',
     senderJid = '',
+    canonicalSenderJid = '',
     senderName = '',
     payload = {},
     roster = null,
@@ -36,7 +37,7 @@ const buildContextPack = ({
         sender: {
             name: senderName,
             jid: senderJid,
-            canonicalJid: senderJid,
+            canonicalJid: canonicalSenderJid || senderJid,
         },
         message: {
             text: messageText,
@@ -101,7 +102,11 @@ const renderContextPackForPrompt = (pack) => {
     if (pack.chat.name) lines.push(`- Nama grup: ${pack.chat.name}.`);
     if (pack.sender.name) lines.push(`- Pengirim: ${pack.sender.name}.`);
     if (pack.sender.jid) lines.push(`- ID pengirim: ${pack.sender.jid}.`);
+    if (pack.sender.canonicalJid) lines.push(`- Nomor DM pengirim saat ini: ${pack.sender.canonicalJid}.`);
     if (pack.chat.id) lines.push(`- ID chat: ${pack.chat.id}.`);
+    if (pack.sender.canonicalJid) {
+        lines.push(`- Kalau user minta DM dirinya sendiri / gue / aku / saya / pengirim ini, gunakan <dm target="${pack.sender.canonicalJid}">isi pesan</dm>.`);
+    }
 
     if (pack.chat.type === 'group') {
         lines.push('- Privasi: kalau ada ingatan bertanda [privat], itu dari DM pribadi orangnya. JANGAN diungkit di grup kecuali dia sendiri yang mengangkat duluan.');
