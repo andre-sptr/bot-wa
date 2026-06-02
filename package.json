@@ -5,8 +5,10 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test test/*.test.js",
-    "test:live": "node --test test/liveReasoning.js",
-    "test:all": "npm test && npm run test:live"
+    "test:live": "node test/livePolicy.js",
+    "test:policy": "node test/livePolicy.js",
+    "eval:quality": "node test/evalQuality.js",
+    "test:all": "npm test && npm run test:policy && npm run eval:quality"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",

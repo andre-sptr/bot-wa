@@ -8,7 +8,8 @@ const {
     detectMessageTrigger,
     learnBotMentionFromIncoming,
 } = require('./messageTriggers');
-const { buildRuntimeChatContext, autoCategorize } = require('./aiAdvanced');
+const { buildContextPack } = require('./contextPack');
+const { autoCategorize } = require('./aiAdvanced');
 const { loadRoster, fetchAndCacheRoster } = require('./groupRoster');
 const {
     shouldConsiderProactive,
@@ -17,7 +18,7 @@ const {
     PROACTIVE_SKIP_MARKER,
 } = require('./proactiveGuard');
 const { withChatLock } = require('../chatContext');
-const { extractDMs, stripDMTags } = require('./reasoning');
+const { extractDMs, stripDMTags, ensureResponseSafety } = require('./reasoning');
 const {
     collectKnownDmTargets,
     splitAllowedDMs,
@@ -116,7 +117,6 @@ const createWebhookProcessor = ({
         // Sender identification (notifyName lives in _data)
         const senderJid = isGroup ? getPayloadSenderId(payload, chatId) : chatId;
         const senderName = _data.notifyName || payload.notifyName || senderJid.split('@')[0];
-        const chatContext = buildRuntimeChatContext({ chatId, senderJid, payload });
 
         // Enrich with roster summary for group chats
         let roster = null;
@@ -133,15 +133,6 @@ const createWebhookProcessor = ({
                     console.error(`[Roster] Auto-fetch failed for ${chatId}:`, e?.message);
                 }
             }
-            if (roster && roster.participants) {
-                const names = roster.participants
-                    .filter(p => p.name)
-                    .map(p => `${p.name} (${p.id})`)
-                    .slice(0, 20);
-                chatContext.rosterSummary = names.length > 0
-                    ? `${roster.participants.length} anggota (${names.join(', ')})`
-                    : `${roster.participants.length} anggota`;
-            }
         }
 
         // Trigger detection
@@ -155,6 +146,18 @@ const createWebhookProcessor = ({
         }
 
         const trigger = detectMessageTrigger({ body: msgBody, payload, state: botTriggerState, isDM });
+
+        // Build structured context pack
+        const contextPack = buildContextPack({
+            chatId,
+            senderJid,
+            senderName,
+            payload,
+            roster,
+            messageText: msgBody,
+            trigger: trigger || 'proactive',
+            proactiveMode: !trigger,
+        });
         if (!trigger) {
             // Proactive pipeline (group only)
             if (isGroup) {
@@ -173,10 +176,7 @@ const createWebhookProcessor = ({
                             const canonicalSenderJid = await resolveCanonicalSender(senderJid);
                             const askAI = makeAskAI(chatId, senderName, canonicalSenderJid);
 
-                            // Inject proactive instruction into chatContext
-                            chatContext.proactiveMode = true;
-
-                            let reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext, canonicalSenderJid);
+                            let reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, contextPack, canonicalSenderJid);
 
                             if (!reply || reply.includes(PROACTIVE_SKIP_MARKER)) {
                                 record(`${source}-proactive-skipped`, {
@@ -190,6 +190,7 @@ const createWebhookProcessor = ({
 
                             const dms = extractDMs(reply);
                             reply = stripDMTags(reply);
+                            reply = ensureResponseSafety(reply, true);
 
                             if (dms.length > 0) {
                                 record(`${source}-proactive-dms-detected`, { count: dms.length });
@@ -278,7 +279,7 @@ const createWebhookProcessor = ({
             if (trigger === 'cmd') {
                 reply = await processCommand(msgBody, chatId, askAI);
             } else {
-                reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, chatContext, canonicalSenderJid);
+                reply = await handleNaturalLanguage(msgBody, chatId, senderName, askAI, contextPack, canonicalSenderJid);
             }
 
             if (!reply) {
@@ -292,6 +293,7 @@ const createWebhookProcessor = ({
 
             const dms = extractDMs(reply);
             reply = stripDMTags(reply);
+            reply = ensureResponseSafety(reply, isGroup);
 
             if (dms.length > 0) {
                 record(`${source}-dms-detected`, { count: dms.length });

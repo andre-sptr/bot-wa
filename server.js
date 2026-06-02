@@ -3,12 +3,10 @@ const express = require('express');
 const axios = require('axios');
 const cron = require('node-cron');
 const Anthropic = require('@anthropic-ai/sdk');
-const { getHistory, addMessage, getRelevantMemory } = require('./chatContext');
+const { getHistory, addMessage } = require('./chatContext');
 const {
     classifyIntent,
     autoCategorize,
-    contextAwareResponse,
-    getCurrentMoodContext,
 } = require('./modules/aiAdvanced');
 const { loadAndStartReminders, checkAllServers } = require('./modules/automation');
 const {
@@ -20,9 +18,6 @@ const {
     rememberBotMessage,
 } = require('./modules/messageTriggers');
 const { createDebugStore, previewText, safeError } = require('./modules/webhookDebug');
-const { parseBubuReply } = require('./modules/reasoning');
-const { buildBubuPersona } = require('./modules/bubuPersona');
-const { buildSystemBlocks } = require('./modules/systemBlocks');
 const { createGroupRosterClient } = require('./modules/groupRoster');
 const { createLidResolver } = require('./modules/lidResolver');
 const { guardMentions } = require('./modules/mentionHelper');
@@ -30,6 +25,7 @@ const { createCooldownStore } = require('./modules/cooldownStore');
 const { getMultipleCrypto } = require('./modules/crypto');
 const { createCommandHandler } = require('./modules/commands');
 const { createWebhookProcessor } = require('./modules/webhookProcessor');
+const { adaptiveAskAI } = require('./modules/reasoningEngine');
 const lifecycle = require('./modules/lifecycle');
 
 const app = express();
@@ -48,7 +44,6 @@ const DEBUG_TOKEN = process.env.DEBUG_TOKEN || '';
 // Default 30s = ~2880 hit/hari ke WAHA /chats. Sebelumnya 5s = ~17k/hari (boros).
 // Override via env WAHA_POLL_INTERVAL_MS kalau butuh refresh lebih cepat di dev.
 const WAHA_POLL_INTERVAL_MS = parseInt(process.env.WAHA_POLL_INTERVAL_MS || '30000', 10);
-const BUBU_PERSONA = buildBubuPersona({ botPhone: BOT_PHONE });
 
 const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
@@ -82,69 +77,38 @@ const formatForWhatsApp = (text) => {
     return text.replace(/\*\*(.+?)\*\*/g, '*$1*');
 };
 
-const makeAskAI = (chatId, senderName, senderJid = null) => async (systemPrompt, userMessage, useContext = true) => {
+const makeAskAI = (chatId, senderName, senderJid = null) => async (systemPrompt, userMessage, arg3, arg4) => {
     try {
-        const moodContext = getCurrentMoodContext();
-        const staticSystemText = `${BUBU_PERSONA}\n\n${moodContext}\n`;
-        const systemBlocks = buildSystemBlocks(staticSystemText, systemPrompt);
-
-        const messages = [];
-
-        if (useContext && chatId) {
-            const history = getHistory(chatId);
-            for (const msg of history) {
-                const content = msg.role === 'user' && msg.sender
-                    ? `[${msg.sender}] ${msg.content}`
-                    : msg.content;
-                messages.push({ role: msg.role, content });
-            }
+        let contextPack = null;
+        let useContext = true;
+        if (typeof arg3 === 'boolean') {
+            useContext = arg3;
+        } else if (arg3 !== undefined) {
+            contextPack = arg3;
+            if (typeof arg4 === 'boolean') useContext = arg4;
         }
 
-        const formattedMessage = (useContext && senderName)
-            ? `[${senderName}] ${userMessage}`
-            : userMessage;
-        messages.push({ role: 'user', content: formattedMessage });
-
-        if (messages.length > 0 && messages[0].role !== 'user') messages.shift();
-
-        const mergedMessages = [];
-        for (const msg of messages) {
-            const last = mergedMessages[mergedMessages.length - 1];
-            if (last && last.role === msg.role) {
-                last.content += '\n' + msg.content;
-            } else {
-                mergedMessages.push({ ...msg });
-            }
-        }
-
-        const response = await anthropic.messages.create({
-            model: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
-            system: systemBlocks,
-            messages: mergedMessages,
-            max_tokens: 1200,
-            temperature: 0.85
+        const aiReply = await adaptiveAskAI({
+            anthropic,
+            model: process.env.ANTHROPIC_MODEL,
+            botPhone: BOT_PHONE,
+            systemPrompt,
+            userMessage,
+            chatId,
+            senderName,
+            contextPack,
+            getHistoryFn: getHistory,
+            useContext
         });
 
-        const rawText = response.content
-            .filter(b => b.type === 'text')
-            .map(b => b.text)
-            .join('\n');
+        const formattedReply = formatForWhatsApp(aiReply);
 
-        const { reasoning, response: parsedResponse } = parseBubuReply(rawText);
-        if (reasoning) {
-            const preview = reasoning.length > 280 ? reasoning.slice(0, 280) + '…' : reasoning;
-            console.log(`[Bubu reasoning][${chatId || 'no-chat'}] ${preview}`);
+        if (useContext && chatId && formattedReply) {
+            addMessage(chatId, userMessage, formattedReply, senderName, senderJid);
         }
-
-        const aiReply = formatForWhatsApp(parsedResponse);
-
-        if (useContext && chatId && aiReply) addMessage(chatId, userMessage, aiReply, senderName, senderJid);
-        return aiReply;
+        return formattedReply;
     } catch (error) {
         console.error('Error AI:', error?.message || error);
-        // Setelah SDK retry budget habis: jangan bisu — kasih sinyal ramah.
-        // null hanya untuk kasus tertentu (mis. summarizeConversation) supaya caller bisa
-        // kasih message-nya sendiri; di sini chat normal punya chatId+sender → reply fallback.
         if (!chatId) return null;
         return 'Bubu lagi nge-lag bentar nih, coba lagi ya sebentar.';
     }
@@ -356,8 +320,7 @@ const handleNaturalLanguage = async (msg, chatId, senderName, askAI, chatContext
             if (result) return result;
         }
 
-        const memoryContext = getRelevantMemory(chatId, msg, senderJid);
-        const response = await contextAwareResponse(msg, askAI, { senderName, memoryContext, chatContext });
+        const response = await askAI('', msg, chatContext, true);
         if (!response) return null;
 
         const prefix = category === 'URGENT' ? '! ' : '';

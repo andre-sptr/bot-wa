@@ -62,6 +62,8 @@ const autoCategorize = (message) => {
     return 'INFO';
 };
 // Context-aware AI response with sender awareness and memory
+const { renderContextPackForPrompt } = require('./contextPack');
+
 const compactQuotedText = (text = '', maxLength = 500) => {
     const normalized = String(text).replace(/\s+/g, ' ').trim();
     if (normalized.length <= maxLength) return normalized;
@@ -124,31 +126,62 @@ const buildRuntimeChatContext = ({ chatId = '', senderJid = '', payload = {} } =
     if (quotedMessage) context.quotedMessage = quotedMessage;
     return context;
 };
-const contextAwareResponse = async (message, askAI, senderOrOptions, memoryContextArg) => {
+const contextAwareResponse = async (message, askAI, contextPackArg, legacyMemoryContext) => {
     try {
-        const options = senderOrOptions && typeof senderOrOptions === 'object'
-            ? senderOrOptions
-            : { senderName: senderOrOptions, memoryContext: memoryContextArg };
-        const { senderName, memoryContext, chatContext } = options;
-        const now = new Date();
-        const hour = parseInt(now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', hour: 'numeric', hour12: false }));
-        const greeting = hour < 11 ? 'pagi' : hour < 15 ? 'siang' : hour < 18 ? 'sore' : 'malam';
-        let contextInfo = `${buildDynamicAwarenessContext({
-            ...chatContext,
-            senderName: chatContext?.senderName || senderName,
-        })}
+        // If third arg is string, it's the old legacy signature `(message, askAI, senderName, memoryContext)`
+        // If third arg is object, it could be the old options object OR the new contextPack.
+        // We detect contextPack by checking for `pack.chat` property.
+        let contextInfo = '';
+        let targetSenderName = 'user';
+
+        if (typeof contextPackArg === 'string') {
+            // Legacy signature
+            const senderName = contextPackArg;
+            targetSenderName = senderName;
+            const now = new Date();
+            const hour = parseInt(now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', hour: 'numeric', hour12: false }));
+            const greeting = hour < 11 ? 'pagi' : hour < 15 ? 'siang' : hour < 18 ? 'sore' : 'malam';
+
+            contextInfo = `Konteks operasional:
+- Waktu: ${now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}
+- Hari: ${now.toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', weekday: 'long' })}
+- Sesi: ${greeting}
+- Pengirim: ${senderName}`;
+
+            if (legacyMemoryContext) {
+                contextInfo += `\n\nIngatan percakapan sebelumnya:\n${legacyMemoryContext}`;
+            }
+        } else if (contextPackArg && contextPackArg.chat) {
+            // New contextPack signature
+            targetSenderName = contextPackArg.sender.name || 'user';
+            contextInfo = renderContextPackForPrompt(contextPackArg);
+        } else if (contextPackArg) {
+            // Old options signature (used by tests mostly now)
+            const { senderName, memoryContext, chatContext } = contextPackArg;
+            targetSenderName = senderName || 'user';
+            const now = new Date();
+            const hour = parseInt(now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', hour: 'numeric', hour12: false }));
+            const greeting = hour < 11 ? 'pagi' : hour < 15 ? 'siang' : hour < 18 ? 'sore' : 'malam';
+
+            contextInfo = `${buildDynamicAwarenessContext({
+                ...chatContext,
+                senderName: chatContext?.senderName || senderName,
+            })}
 Konteks operasional:
 - Waktu: ${now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}
 - Hari: ${now.toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', weekday: 'long' })}
 - Sesi: ${greeting}`;
-        if (senderName) {
-            contextInfo += `\n- Pengirim: ${senderName}`;
+
+            if (senderName) {
+                contextInfo += `\n- Pengirim: ${senderName}`;
+            }
+            if (memoryContext) {
+                contextInfo += `\n\nIngatan percakapan sebelumnya:\n${memoryContext}`;
+            }
         }
-        if (memoryContext) {
-            contextInfo += `\n\nIngatan percakapan sebelumnya:\n${memoryContext}`;
-        }
+
         return await askAI(
-            `Jawab pesan dari ${senderName || 'user'} dengan gaya khas Bubu. Gunakan konteks berikut jika relevan.\n\n${contextInfo}`,
+            `Jawab pesan dari ${targetSenderName} dengan gaya khas Bubu. Gunakan konteks berikut jika relevan.\n\n${contextInfo}`,
             message
         );
     } catch {
