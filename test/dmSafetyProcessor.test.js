@@ -56,6 +56,6 @@ test('processIncomingPayload: allows triggered dm to roster target and blocks un
     assert.equal(sent[0].text, 'boleh');
     assert.equal(sent[1].chatId, groupId);
     assert.match(sent[1].text, /Oke/);
-    assert.match(sent[1].text, /belum bisa DM 628999@c\.us/);
+    assert.match(sent[1].text, /belum bisa DM kontak itu/);
     assert.ok(records.some(r => r.stage === 'test-dm-blocked'));
 });

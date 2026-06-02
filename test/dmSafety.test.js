@@ -62,11 +62,11 @@ test('splitAllowedDMs allows known explicit JIDs and blocks unknown/bare targets
 test('appendBlockedDmNotice appends notice or creates one when reply empty', () => {
     assert.equal(
         appendBlockedDmNotice('Balasan grup', [{ target: '628999@c.us', message: 'x' }]),
-        'Balasan grup\n\nBubu belum bisa DM 628999@c.us karena kontaknya belum dikenal.'
+        'Balasan grup\n\nBubu belum bisa DM kontak itu karena kontaknya belum dikenal.'
     );
     assert.equal(
         appendBlockedDmNotice('', [{ target: '628999@c.us', message: 'x' }]),
-        'Bubu belum bisa DM 628999@c.us karena kontaknya belum dikenal.'
+        'Bubu belum bisa DM kontak itu karena kontaknya belum dikenal.'
     );
 });
 

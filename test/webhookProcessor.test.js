@@ -122,7 +122,7 @@ test('processIncomingPayload: proactive reply with dm tag does not throw', async
     // and the reply to the group carries a notice instead of a silent DM.
     assert.deepEqual(sent.map(s => s.chatId), [groupId]);
     assert.match(sent[0].text, /Balasan grup/);
-    assert.match(sent[0].text, /belum bisa DM 628111@c\.us/);
+    assert.match(sent[0].text, /belum bisa DM kontak itu/);
 });
 
 test.after(() => {

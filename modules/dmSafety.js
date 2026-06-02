@@ -43,8 +43,7 @@ const splitAllowedDMs = (dms, knownTargets) => {
 
 const appendBlockedDmNotice = (reply, blocked) => {
     if (!Array.isArray(blocked) || blocked.length === 0) return reply;
-    const targets = blocked.map(dm => dm.target).filter(Boolean).join(', ') || 'target itu';
-    const notice = `Bubu belum bisa DM ${targets} karena kontaknya belum dikenal.`;
+    const notice = `Bubu belum bisa DM kontak itu karena kontaknya belum dikenal.`;
     return reply ? `${reply}\n\n${notice}` : notice;
 };
 
