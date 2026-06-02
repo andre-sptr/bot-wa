@@ -6,10 +6,27 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { parseBubuReply } = require('../modules/reasoning');
 const { buildBubuPersona } = require('../modules/bubuPersona');
 const { buildSystemBlocks } = require('../modules/systemBlocks');
-const { buildDynamicAwarenessContext, getCurrentMoodContext } = require('../modules/aiAdvanced');
+const { getCurrentMoodContext } = require('../modules/aiAdvanced');
+const { buildContextPack, renderContextPackForPrompt } = require('../modules/contextPack');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const BUBU_PERSONA = buildBubuPersona({ botPhone: process.env.BOT_PHONE?.replace(/\D/g, '') || '' });
+
+const buildEvalContext = ({ chatType = 'group', chatName = '', senderName = '', senderJid = '', chatId = '', messageText = '', quotedMessage = null, proactiveMode = false } = {}) => renderContextPackForPrompt(buildContextPack({
+    chatId: chatId || (chatType === 'dm' ? senderJid : 'eval@g.us'),
+    senderJid,
+    senderName,
+    payload: {
+        chatName,
+        replyTo: quotedMessage ? {
+            body: quotedMessage.text,
+            author: quotedMessage.author,
+            fromMe: quotedMessage.fromBot,
+        } : undefined,
+    },
+    messageText,
+    proactiveMode,
+}));
 
 const SCENARIOS = [
     {
@@ -22,7 +39,7 @@ const SCENARIOS = [
         label: 'Dynamic DM context stays quiet',
         sender: 'Andre',
         message: 'halo',
-        dynamicContext: buildDynamicAwarenessContext({
+        dynamicContext: buildEvalContext({
             chatType: 'dm',
             senderName: 'Andre',
             senderJid: '628123@c.us',
@@ -34,7 +51,7 @@ const SCENARIOS = [
         label: 'Dynamic group context stays quiet',
         sender: 'Rina',
         message: 'halo bubu',
-        dynamicContext: buildDynamicAwarenessContext({
+        dynamicContext: buildEvalContext({
             chatType: 'group',
             chatName: 'Draft Awareness',
             senderName: 'Rina',
@@ -47,7 +64,7 @@ const SCENARIOS = [
         label: 'Quoted bubble context is used',
         sender: 'Andre',
         message: 'itu udah aman belum?',
-        dynamicContext: buildDynamicAwarenessContext({
+        dynamicContext: buildEvalContext({
             chatType: 'group',
             chatName: 'Draft Awareness',
             senderName: 'Andre',
@@ -66,7 +83,7 @@ const SCENARIOS = [
         label: 'Proactive Mode - Low Value (Should SKIP)',
         sender: 'Siti',
         message: 'wkwkwk oke sip, mantap.',
-        dynamicContext: buildDynamicAwarenessContext({
+        dynamicContext: buildEvalContext({
             chatType: 'group',
             chatName: 'Tech Talk',
             senderName: 'Siti',

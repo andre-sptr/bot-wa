@@ -8,7 +8,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { parseBubuReply } = require('../modules/reasoning');
 const { buildBubuPersona } = require('../modules/bubuPersona');
 const { buildSystemBlocks } = require('../modules/systemBlocks');
-const { buildDynamicAwarenessContext } = require('../modules/aiAdvanced');
+const { buildContextPack, renderContextPackForPrompt } = require('../modules/contextPack');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const BUBU_PERSONA = buildBubuPersona({ botPhone: process.env.BOT_PHONE?.replace(/\D/g, '') || '' });
@@ -24,6 +24,22 @@ const MOOD_DESCRIPTIONS = {
 };
 
 const fixedMoodContext = (mood) => `[Mood Bubu sekarang: ${mood} — ${MOOD_DESCRIPTIONS[mood]}]`;
+
+const buildEvalContext = ({ chatType = 'group', chatName = '', senderName = '', senderJid = '', chatId = '', messageText = '', quotedMessage = null, proactiveMode = false } = {}) => renderContextPackForPrompt(buildContextPack({
+    chatId: chatId || (chatType === 'dm' ? senderJid : 'eval@g.us'),
+    senderJid,
+    senderName,
+    payload: {
+        chatName,
+        replyTo: quotedMessage ? {
+            body: quotedMessage.text,
+            author: quotedMessage.author,
+            fromMe: quotedMessage.fromBot,
+        } : undefined,
+    },
+    messageText,
+    proactiveMode,
+}));
 
 const QUALITY_SCENARIOS = [
     {
@@ -99,7 +115,7 @@ const QUALITY_SCENARIOS = [
         sender: 'Budi',
         message: 'Eh menurut kalian, mending kita pakai PostgreSQL atau MongoDB ya buat project baru ini? Agak bingung.',
         mood: 'focused',
-        dynamicContext: buildDynamicAwarenessContext({
+        dynamicContext: buildEvalContext({
             chatType: 'group',
             chatName: 'Tech Talk',
             senderName: 'Budi',
