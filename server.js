@@ -41,8 +41,8 @@ app.use(express.json());
 const WAHA_URL = process.env.WAHA_URL;
 const WAHA_SESSION = process.env.WAHA_SESSION;
 const WAHA_API_KEY = process.env.WAHA_API_KEY;
-const TARGET_GROUPS = (process.env.GROUP_ID || "").split(",").map(id => id.trim()).filter(Boolean);
-const ALLOW_ALL_GROUPS = TARGET_GROUPS.length === 0;
+const TARGET_GROUPS = []; // Update agar tidak bergantung pada GROUP_ID
+const ALLOW_ALL_GROUPS = true;
 const BOT_PHONE = process.env.BOT_PHONE?.replace(/\D/g, '') || '';
 const BOT_LID = process.env.BOT_LID?.replace(/@lid$/i, '') || '';
 const PORT = process.env.PORT || 3000;
