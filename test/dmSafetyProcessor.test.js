@@ -59,3 +59,58 @@ test('processIncomingPayload: allows triggered dm to roster target and blocks un
     assert.match(sent[1].text, /belum bisa DM kontak itu/);
     assert.ok(records.some(r => r.stage === 'test-dm-blocked'));
 });
+
+test('processIncomingPayload: allows legacy dm tag to directory known target', async () => {
+    const { createWebhookProcessor } = require('../modules/webhookProcessor');
+    const sent = [];
+    const records = [];
+    const groupId = 'directory-dm-safety@g.us';
+
+    const processIncoming = createWebhookProcessor({
+        sendWA: async (text, chatId, mentions = []) => {
+            sent.push({ text, chatId, mentions });
+            return { ok: true };
+        },
+        makeAskAI: () => async () => 'reply',
+        processCommand: async () => null,
+        handleNaturalLanguage: async () => '<dm target="628999@c.us">dari directory</dm>Oke',
+        summarizePayload: () => ({}),
+        resolveCanonicalSender: async (jid) => jid,
+        hasProcessedIncoming: () => false,
+        markProcessedIncoming: () => {},
+        isRateLimited: () => false,
+        summarizeBotState: () => ({}),
+        botTriggerState: {
+            botIdentifiers: new Set(['bubu']),
+            recentBotMessageIds: new Set(),
+        },
+        groupRosterClient: null,
+        lidResolver: null,
+        chatDirectory: {
+            upsertGroup: () => {},
+            upsertContact: () => {},
+            knownDmTargets: () => new Set(['628999@c.us']),
+        },
+        mentionCooldownStore: { get: () => 0, set: () => {} },
+        TARGET_GROUPS: [groupId],
+        MENTION_COOLDOWN_MS: 5000,
+    });
+
+    await processIncoming({
+        body: { event: 'message' },
+        payload: {
+            from: groupId,
+            participant: '628222@c.us',
+            body: 'bubu chat orang lama',
+            _data: { notifyName: 'Rina' },
+        },
+        record: (stage, details) => records.push({ stage, details }),
+        source: 'test',
+    });
+
+    assert.deepEqual(sent.map(item => ({ text: item.text, chatId: item.chatId })), [
+        { text: 'dari directory', chatId: '628999@c.us' },
+        { text: 'Oke', chatId: groupId },
+    ]);
+    assert.ok(!records.some(r => r.stage === 'test-dm-blocked'));
+});

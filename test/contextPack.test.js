@@ -56,7 +56,7 @@ test('buildContextPack includes time block with Jakarta timezone', () => {
     assert.ok(typeof pack.time.hour === 'number');
 });
 
-test('renderContextPackForPrompt renders DM awareness without leaking', () => {
+test('renderContextPackForPrompt renders compact DM awareness without leaking nulls', () => {
     const pack = buildContextPack({
         chatId: '628123@c.us',
         senderJid: '628123@c.us',
@@ -65,21 +65,25 @@ test('renderContextPackForPrompt renders DM awareness without leaking', () => {
         messageText: 'halo',
     });
     const rendered = renderContextPackForPrompt(pack);
-    assert.match(rendered, /chat pribadi \(DM\)/i);
+    assert.match(rendered, /Runtime context, do not announce:/);
+    assert.match(rendered, /chat\.type=dm/);
+    assert.match(rendered, /sender\.name=Andre/);
+    assert.match(rendered, /sender\.id=628123@c\.us/);
     assert.doesNotMatch(rendered, /undefined|null/);
 });
 
-test('renderContextPackForPrompt renders group awareness with [privat] rule', () => {
+test('renderContextPackForPrompt renders compact group awareness with privacy rule', () => {
     const pack = buildContextPack({
         chatId: '120@g.us',
         senderJid: '123@lid',
         senderName: 'Rina',
-        payload: {},
+        payload: { chatName: 'Draft Awareness' },
         messageText: 'halo',
     });
     const rendered = renderContextPackForPrompt(pack);
-    assert.match(rendered, /\[privat\]/);
-    assert.match(rendered, /Tipe chat: grup/i);
+    assert.match(rendered, /chat\.type=group/);
+    assert.match(rendered, /chat\.name=Draft Awareness/);
+    assert.match(rendered, /privacy=private memories stay private/);
 });
 
 test('renderContextPackForPrompt includes proactive instructions', () => {
@@ -89,20 +93,24 @@ test('renderContextPackForPrompt includes proactive instructions', () => {
         proactiveMode: true,
     });
     const rendered = renderContextPackForPrompt(pack);
-    assert.match(rendered, /MODE PROAKTIF/);
+    assert.match(rendered, /mode\.proactive=true/);
     assert.match(rendered, /\[SKIP\]/);
 });
 
 test('renderContextPackForPrompt includes roster summary when available', () => {
     const pack = buildContextPack({
         chatId: '120@g.us',
-        roster: { participants: [{ id: '628111@c.us', name: 'Andre' }, { id: '628222@c.us', name: 'Budi' }] },
+        roster: {
+            participants: [
+                { id: '628111@c.us', name: 'Andre' },
+                { id: '628222@c.us', name: 'Budi' },
+            ],
+        },
     });
     const rendered = renderContextPackForPrompt(pack);
-    assert.match(rendered, /2 anggota/);
-    assert.match(rendered, /Andre \(628111@c\.us\)/);
-    assert.match(rendered, /BOLEH dipakai untuk <dm target="\.\.\.">/);
-    assert.match(rendered, /gunakan ID persis dari tanda kurung sebagai target DM/);
+    assert.match(rendered, /roster\.count=2/);
+    assert.match(rendered, /roster\.members=Andre:628111@c\.us, Budi:628222@c\.us/);
+    assert.match(rendered, /capabilities=send_dm, send_group, mention_user, tag_all_literal/);
 });
 
 test('renderContextPackForPrompt includes quoted message text', () => {
@@ -117,8 +125,8 @@ test('renderContextPackForPrompt includes quoted message text', () => {
         },
     });
     const rendered = renderContextPackForPrompt(pack);
-    assert.match(rendered, /Harga BTC tadi 1,7M/);
-    assert.match(rendered, /dari rina/i);
+    assert.match(rendered, /message\.replyTo\.text=Harga BTC tadi 1,7M/);
+    assert.match(rendered, /message\.replyTo\.author=Rina/);
 });
 
 test('renderContextPackForPrompt truncates long quoted messages', () => {
@@ -134,7 +142,7 @@ test('renderContextPackForPrompt truncates long quoted messages', () => {
         },
     });
     const rendered = renderContextPackForPrompt(pack);
-    assert.ok(rendered.includes('…'));
+    assert.ok(rendered.includes('...'));
     assert.ok(!rendered.includes('x'.repeat(550)));
 });
 
@@ -145,21 +153,20 @@ test('renderContextPackForPrompt includes memory context when available', () => 
     });
     const rendered = renderContextPackForPrompt(pack);
     if (pack.memory?.relevant) {
-        assert.match(rendered, /Ingatan percakapan sebelumnya/);
+        assert.match(rendered, /memory\.relevant=/);
         assert.match(rendered, /\[/);
     }
 });
 
-test('renderContextPackForPrompt includes operational time context', () => {
+test('renderContextPackForPrompt includes compact time context', () => {
     const pack = buildContextPack({ chatId: '120@g.us' });
     const rendered = renderContextPackForPrompt(pack);
-    assert.match(rendered, /Konteks operasional/);
-    assert.match(rendered, /Waktu:/);
-    assert.match(rendered, /Hari:/);
-    assert.match(rendered, /Sesi:/);
+    assert.match(rendered, /time\.jakarta=/);
+    assert.match(rendered, /time\.day=/);
+    assert.match(rendered, /time\.greeting=/);
 });
 
-test('renderContextPackForPrompt tells Bubu how to DM the current sender', () => {
+test('renderContextPackForPrompt includes current sender canonical id without dm tag instructions', () => {
     const pack = buildContextPack({
         chatId: '120@g.us',
         senderJid: '123@lid',
@@ -169,7 +176,6 @@ test('renderContextPackForPrompt tells Bubu how to DM the current sender', () =>
     });
     const rendered = renderContextPackForPrompt(pack);
     assert.equal(pack.sender.canonicalJid, '628222@c.us');
-    assert.match(rendered, /Nomor DM pengirim saat ini: 628222@c\.us/);
-    assert.match(rendered, /user minta DM dirinya sendiri/);
-    assert.match(rendered, /<dm target="628222@c\.us">/);
+    assert.match(rendered, /sender\.id=628222@c\.us/);
+    assert.doesNotMatch(rendered, /<dm target=/);
 });

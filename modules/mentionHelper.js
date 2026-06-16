@@ -59,7 +59,7 @@ const stripTrailingPunctuation = (raw) => raw.replace(/[.,!?;:)\]]+$/, '');
 /**
  * Find @mentions in AI output text and resolve against roster participants.
  * Returns array of { matchedText, participant } (deduplicated by participant id).
- * When @all/@semua/@everyone is found, returns ALL mentionable participants.
+ * Tag-all keywords stay literal; WhatsApp handles @semua itself.
  *
  * @param {string} text - AI output text
  * @param {Array} participants - roster participants [{ id, role, name }]
@@ -70,8 +70,8 @@ const extractMentionIntents = (text, participants) => {
     const pattern = /@(\S+)/g;
     const lookups = buildLookups(participants);
     const seen = new Set();
+    const seenTagAll = new Set();
     const intents = [];
-    let hasTagAll = false;
 
     let match;
     while ((match = pattern.exec(text)) !== null) {
@@ -81,7 +81,10 @@ const extractMentionIntents = (text, participants) => {
 
         // Detect tag-all keywords
         if (TAG_ALL_KEYWORDS.has(lower)) {
-            hasTagAll = true;
+            if (!seenTagAll.has(lower)) {
+                seenTagAll.add(lower);
+                intents.push({ matchedText: match[0], participant: null, tagAll: true });
+            }
             continue;
         }
 
@@ -97,16 +100,6 @@ const extractMentionIntents = (text, participants) => {
         if (participant && !seen.has(participant.id)) {
             seen.add(participant.id);
             intents.push({ matchedText: match[0], participant });
-        }
-    }
-
-    // Tag-all: add ALL mentionable participants not already included
-    if (hasTagAll) {
-        for (const p of participants) {
-            if (!seen.has(p.id) && phoneMentionable(p.id)) {
-                seen.add(p.id);
-                intents.push({ matchedText: '@all', participant: p });
-            }
         }
     }
 
@@ -132,32 +125,16 @@ const formatMentionedReply = (text, intents) => {
     const replacedTexts = new Set();
 
     for (const intent of intents) {
+        if (intent.tagAll) continue;
         const mentionable = phoneMentionable(intent.participant.id);
         if (!mentionable) continue; // @lid — leave as-is
 
         // Replace @Name with @phone in text (only if not already replaced)
-        if (intent.matchedText === '@all') {
-            // For tag-all participants, just add to mentions — don't replace text per participant
-            mentions.push(mentionable.jid);
-        } else if (!replacedTexts.has(intent.matchedText)) {
+        if (!replacedTexts.has(intent.matchedText)) {
             formatted = formatted.replace(intent.matchedText, `@${mentionable.phone}`);
             replacedTexts.add(intent.matchedText);
             mentions.push(mentionable.jid);
         }
-    }
-
-    // If we had @all, also replace the @all/@semua/@everyone keyword in text
-    // with a list of @phone mentions (or just replace with @all placeholder)
-    if (intents.some(i => i.matchedText === '@all')) {
-        formatted = formatted.replace(/@(all|semua|everyone)/gi, (m) => {
-            // Build the @phone list for all tagged participants from @all
-            const allPhones = intents
-                .filter(i => i.matchedText === '@all')
-                .map(i => phoneMentionable(i.participant.id))
-                .filter(Boolean)
-                .map(m => `@${m.phone}`);
-            return allPhones.length > 0 ? allPhones.join(' ') : m;
-        });
     }
 
     return { text: formatted, mentions };

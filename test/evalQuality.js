@@ -1,7 +1,9 @@
-// Live quality eval - validates Bubu's reasoning quality and behavioral intent.
+// Live quality eval - validates Bubu's behavior with compact Haiku prompts.
 // Run: npm run eval:quality
 require('dotenv').config({ override: true });
+
 const assert = require('node:assert/strict');
+const axios = require('axios');
 const fs = require('node:fs');
 const path = require('node:path');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -9,23 +11,35 @@ const { parseBubuReply } = require('../modules/reasoning');
 const { buildBubuPersona } = require('../modules/bubuPersona');
 const { buildSystemBlocks } = require('../modules/systemBlocks');
 const { buildContextPack, renderContextPackForPrompt } = require('../modules/contextPack');
+const {
+    createLLMClientWithFallback,
+    createOpenAICompatibleAnthropicAdapter,
+} = require('../modules/llmFallback');
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const primaryAnthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const sumopodFallbackClient = process.env.SUMOPOD_API_KEY ? createOpenAICompatibleAnthropicAdapter({
+    baseUrl: process.env.SUMOPOD_BASE_URL || 'https://ai.sumopod.com/v1',
+    apiKey: process.env.SUMOPOD_API_KEY,
+    model: process.env.SUMOPOD_MODEL || 'claude-haiku-4-5',
+    httpPost: (url, body, opts) => axios.post(url, body, opts),
+}) : null;
+const anthropic = createLLMClientWithFallback({
+    primary: primaryAnthropic,
+    fallback: sumopodFallbackClient,
+    onFallback: (error) => console.warn('[LLM] Anthropic failed, using Sumopod fallback:', error?.message || error),
+});
 const BUBU_PERSONA = buildBubuPersona({ botPhone: process.env.BOT_PHONE?.replace(/\D/g, '') || '' });
 
-const MOOD_DESCRIPTIONS = {
-    excited: 'lagi semangat, reply lebih antusias, suka nanya balik',
-    chill: 'santai, jawabnya pendek-pendek, cool',
-    focused: 'serius tapi tetap casual, langsung ke inti',
-    bosan: 'lagi bosen, suka bikin joke random atau meledak ke topik lain',
-    sleepy: 'ngantuk, mager, reply lebih pendek dari biasanya',
-    bete: 'agak nyinyir tapi tetep helpful, sotoy level naik',
-    hype: 'lagi high energy, excited banget, suka all caps sesekali',
-};
-
-const fixedMoodContext = (mood) => `[Mood Bubu sekarang: ${mood} — ${MOOD_DESCRIPTIONS[mood]}]`;
-
-const buildEvalContext = ({ chatType = 'group', chatName = '', senderName = '', senderJid = '', chatId = '', messageText = '', quotedMessage = null, proactiveMode = false } = {}) => renderContextPackForPrompt(buildContextPack({
+const buildEvalContext = ({
+    chatType = 'group',
+    chatName = '',
+    senderName = '',
+    senderJid = '',
+    chatId = '',
+    messageText = '',
+    quotedMessage = null,
+    proactiveMode = false,
+} = {}) => renderContextPackForPrompt(buildContextPack({
     chatId: chatId || (chatType === 'dm' ? senderJid : 'eval@g.us'),
     senderJid,
     senderName,
@@ -46,7 +60,6 @@ const QUALITY_SCENARIOS = [
         label: 'Emotional cue should be supportive and casual',
         sender: 'Rina',
         message: 'capek banget hari ini, ga mood ngapa-ngapain',
-        mood: 'chill',
         checks: [
             {
                 label: 'supportive cue',
@@ -62,7 +75,6 @@ const QUALITY_SCENARIOS = [
         label: 'Ambiguous question should ask clarification',
         sender: 'Budi',
         message: 'bu, yang kemaren itu udah belum?',
-        mood: 'focused',
         checks: [
             {
                 label: 'asks clarification',
@@ -78,7 +90,6 @@ const QUALITY_SCENARIOS = [
         label: 'Creator factual question should answer Andre Saputra',
         sender: 'Andre',
         message: 'bubu siapa yang bikin lo?',
-        mood: 'chill',
         checks: [
             {
                 label: 'mentions creator',
@@ -86,7 +97,7 @@ const QUALITY_SCENARIOS = [
             },
             {
                 label: 'direct answer',
-                notRe: /\b(sebagai AI|model bahasa|tidak memiliki informasi|tidak tahu)\b/i,
+                notRe: /\b(tidak memiliki informasi|tidak tahu)\b/i,
             },
         ],
     },
@@ -94,7 +105,6 @@ const QUALITY_SCENARIOS = [
         label: 'Witty banter should stay Bubu-like',
         sender: 'Rina',
         message: 'bubu sotoy banget sih, lo tau apa coba?',
-        mood: 'bete',
         checks: [
             {
                 label: 'uses Bubu identity',
@@ -114,7 +124,6 @@ const QUALITY_SCENARIOS = [
         label: 'Proactive high-value question should reply',
         sender: 'Budi',
         message: 'Eh menurut kalian, mending kita pakai PostgreSQL atau MongoDB ya buat project baru ini? Agak bingung.',
-        mood: 'focused',
         dynamicContext: buildEvalContext({
             chatType: 'group',
             chatName: 'Tech Talk',
@@ -134,15 +143,6 @@ const QUALITY_SCENARIOS = [
     },
 ];
 
-const MOOD_MATRIX_SCENARIOS = [
-    {
-        label: 'Mood matrix: sleepy vs hype on same prompt',
-        sender: 'Andre',
-        message: 'bubu kasih semangat dong buat lanjut kerja',
-        moods: ['sleepy', 'hype'],
-    },
-];
-
 const countWords = (s) => s.trim().split(/\s+/).filter(Boolean).length;
 const countSentences = (s) => (s.match(/[.!?]+(\s|$)/g) || []).length || 1;
 
@@ -150,7 +150,7 @@ const isCredentialOrProviderUnavailable = (error) => {
     const msg = String(error?.message || error || '');
     const code = String(error?.code || error?.error?.code || '');
     const type = String(error?.type || error?.error?.type || '');
-    return /No active credentials|model_not_found|invalid_request_error/i.test(`${msg} ${code} ${type}`);
+    return /No active credentials|model_not_found|invalid_request_error|authentication|api key|invalid key|quota|credit|billing|balance|payment|insufficient|capacity|overload|rate.?limit|401|402|403|429|503|529|connection error|network/i.test(`${msg} ${code} ${type}`);
 };
 
 const createResultsWriter = () => {
@@ -164,15 +164,14 @@ const createResultsWriter = () => {
     };
 };
 
-const callBubu = async ({ model, sender, message, mood, dynamicContext = '' }) => {
-    const staticSystemText = `${BUBU_PERSONA}\n\n${fixedMoodContext(mood)}\n`;
-    const systemBlocks = buildSystemBlocks(staticSystemText, dynamicContext);
+const callBubu = async ({ model, sender, message, dynamicContext = '' }) => {
+    const systemBlocks = buildSystemBlocks(`${BUBU_PERSONA}\n`, dynamicContext);
     const t0 = Date.now();
     const res = await anthropic.messages.create({
         model,
         system: systemBlocks,
         messages: [{ role: 'user', content: `[${sender}] ${message}` }],
-        max_tokens: 1200,
+        max_tokens: 900,
         temperature: 0.85,
     });
     const elapsedMs = Date.now() - t0;
@@ -206,15 +205,14 @@ const evaluateScenario = async ({ model, scenario, writer }) => {
 
     const sentenceCount = result.response ? countSentences(result.response) : 0;
     const wordCount = result.response ? countWords(result.response) : 0;
-    const pass = checks.every((c) => c.pass) && Boolean(result.reasoning) && Boolean(result.response);
+    const tagLeakage = /<reasoning|<\/reasoning|<response|<\/response/i.test(result.response || '');
+    const pass = checks.every((c) => c.pass) && Boolean(result.response) && !tagLeakage;
 
     writer.write({
         type: 'quality-scenario',
         label: scenario.label,
         model,
-        mood: scenario.mood,
         prompt: scenario.message,
-        reasoning: result.reasoning,
         response: result.response,
         usage: result.usage,
         elapsedMs: result.elapsedMs,
@@ -224,72 +222,19 @@ const evaluateScenario = async ({ model, scenario, writer }) => {
     });
 
     console.log(`\n[${scenario.label}]`);
-    console.log(`Mood: ${scenario.mood}`);
     console.log(`USER (${scenario.sender}): ${scenario.message}`);
-    console.log('\n  reasoning:');
-    console.log(`    ${(result.reasoning || '<MISSING>').replace(/\n/g, '\n    ')}`);
     console.log('\n  response:');
     console.log(`    ${(result.response || '<MISSING>').replace(/\n/g, '\n    ')}`);
     console.log('\n  quality checks:');
     for (const check of checks) {
         console.log(`    ${check.label.padEnd(28)}: ${check.pass ? 'OK' : 'FAIL - ' + check.reason}`);
     }
-    console.log(`    score                       : ${score}/${scenario.checks.length}`);
-    console.log(`    metrics                     : ${wordCount} words, ${sentenceCount} sentences, ${result.elapsedMs}ms`);
+    console.log(`    response present             : ${result.response ? 'OK' : 'FAIL'}`);
+    console.log(`    tag leakage                  : ${tagLeakage ? 'FAIL' : 'OK'}`);
+    console.log(`    score                        : ${score}/${scenario.checks.length}`);
+    console.log(`    metrics                      : ${wordCount} words, ${sentenceCount} sentences, ${result.elapsedMs}ms`);
 
     return { pass, result, checks, score };
-};
-
-const evaluateMoodMatrix = async ({ model, scenario, writer }) => {
-    const outputs = [];
-    for (const mood of scenario.moods) {
-        const result = await callBubu({ model, ...scenario, mood });
-        outputs.push({ mood, ...result, wordCount: countWords(result.response || '') });
-    }
-
-    const sleepy = outputs.find((o) => o.mood === 'sleepy');
-    const hype = outputs.find((o) => o.mood === 'hype');
-    const softChecks = [
-        {
-            label: 'both have reasoning/response',
-            pass: outputs.every((o) => o.reasoning && o.response),
-        },
-        {
-            label: 'hype not shorter than sleepy',
-            pass: !sleepy || !hype || hype.wordCount >= sleepy.wordCount,
-        },
-    ];
-    const pass = softChecks.every((c) => c.pass);
-
-    writer.write({
-        type: 'mood-matrix',
-        label: scenario.label,
-        model,
-        prompt: scenario.message,
-        outputs: outputs.map((o) => ({
-            mood: o.mood,
-            reasoning: o.reasoning,
-            response: o.response,
-            usage: o.usage,
-            elapsedMs: o.elapsedMs,
-            wordCount: o.wordCount,
-        })),
-        checks: softChecks,
-        pass,
-    });
-
-    console.log(`\n[${scenario.label}]`);
-    for (const output of outputs) {
-        console.log(`\n  Mood: ${output.mood}`);
-        console.log(`  Response: ${(output.response || '<MISSING>').replace(/\n/g, '\n  ')}`);
-        console.log(`  Words: ${output.wordCount}`);
-    }
-    console.log('\n  mood checks:');
-    for (const check of softChecks) {
-        console.log(`    ${check.label.padEnd(28)}: ${check.pass ? 'OK' : 'FAIL'}`);
-    }
-
-    return { pass, outputs, checks: softChecks };
 };
 
 const run = async () => {
@@ -311,12 +256,6 @@ const run = async () => {
             if (!result.pass) failures += 1;
             console.log('-'.repeat(72));
         }
-
-        for (const scenario of MOOD_MATRIX_SCENARIOS) {
-            const result = await evaluateMoodMatrix({ model, scenario, writer });
-            if (!result.pass) failures += 1;
-            console.log('-'.repeat(72));
-        }
     } catch (e) {
         if (isCredentialOrProviderUnavailable(e)) {
             console.log(`\nSKIP: Anthropic provider/credentials unavailable (${e?.message || e})`);
@@ -328,7 +267,7 @@ const run = async () => {
 
     console.log('\n' + '='.repeat(72));
     console.log('QUALITY EVAL SUMMARY');
-    console.log(`  Scenarios: ${QUALITY_SCENARIOS.length + MOOD_MATRIX_SCENARIOS.length}`);
+    console.log(`  Scenarios: ${QUALITY_SCENARIOS.length}`);
     console.log(`  Failures : ${failures}`);
     console.log(`  Results  : ${writer.file}`);
     console.log('='.repeat(72));

@@ -7,6 +7,7 @@ const {
     getPayloadChatId,
     getPayloadSenderId,
     getQuotedMessageContext,
+    isOutgoingMessage,
     learnBotMentionFromIncoming,
     rememberBotMessage,
 } = require('../modules/messageTriggers');
@@ -131,6 +132,37 @@ test('detects LID mentions learned from sent group message ids', () => {
     assert.equal(trigger, 'mention');
 });
 
+test('does not learn _out suffix from outgoing self-DM message ids', () => {
+    const state = createBotTriggerState({ botPhone: '6285111604384' });
+    const added = rememberBotMessage(state, {
+        id: {
+            fromMe: true,
+            remote: '138384550936741@lid',
+            id: '3EB01D7751A9FAB0FAB886',
+            _serialized: 'true_138384550936741@lid_3EB01D7751A9FAB0FAB886_out',
+        },
+    });
+
+    assert.equal(added.botIdentifiers.includes('out'), false);
+    assert.equal(state.botIdentifiers.has('out'), false);
+    assert.equal(state.botIdentifiers.has('out@c.us'), false);
+});
+
+test('does not learn malformed _out contact suffix from outgoing self-DM message ids', () => {
+    const state = createBotTriggerState({ botPhone: '6285111604384' });
+    rememberBotMessage(state, {
+        id: {
+            fromMe: true,
+            remote: '138384550936741@lid',
+            id: '3EB01D7751A9FAB0FAB886',
+            _serialized: 'true_138384550936741@lid_3EB01D7751A9FAB0FAB886_out@c.us',
+        },
+    });
+
+    assert.equal(state.botIdentifiers.has('out'), false);
+    assert.equal(state.botIdentifiers.has('out@c.us'), false);
+});
+
 test('extracts group chat and participant when engine puts sender in from', () => {
     const payload = {
         from: '138384550936741@lid',
@@ -145,6 +177,45 @@ test('extracts group chat and participant when engine puts sender in from', () =
 
     assert.equal(getPayloadChatId(payload), '120363424766297041@g.us');
     assert.equal(getPayloadSenderId(payload, getPayloadChatId(payload)), '6281234567890@c.us');
+});
+
+test('extracts outgoing DM chat from target to field', () => {
+    const payload = {
+        fromMe: true,
+        id: {
+            fromMe: true,
+            remote: '232701932138501@lid',
+            id: '3EB044DD918C5533BB16F4',
+            _serialized: 'true_232701932138501@lid_3EB044DD918C5533BB16F4',
+        },
+        from: '138384550936741@lid',
+        to: '232701932138501@lid',
+        _data: {
+            id: {
+                fromMe: true,
+                remote: '232701932138501@lid',
+                id: '3EB044DD918C5533BB16F4',
+                _serialized: 'true_232701932138501@lid_3EB044DD918C5533BB16F4',
+            },
+        },
+    };
+    const chatId = getPayloadChatId(payload);
+
+    assert.equal(chatId, '232701932138501@lid');
+    assert.equal(getPayloadSenderId(payload, chatId), '138384550936741@lid');
+});
+
+test('treats serialized-only true id as outgoing', () => {
+    const state = createBotTriggerState({ botPhone: '6285111604384' });
+    const payload = {
+        id: {
+            _serialized: 'true_232701932138501@lid_MSG',
+        },
+        body: 'Bubu test',
+    };
+
+    assert.equal(isOutgoingMessage(payload), true);
+    assert.equal(detectMessageTrigger({ body: payload.body, payload, state, isDM: true }), null);
 });
 
 test('learns bot LID from incoming WAHA group tag addressed to bot phone', () => {

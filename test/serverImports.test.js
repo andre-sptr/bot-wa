@@ -11,3 +11,10 @@ test('server imports message trigger helpers still used by debug analysis', () =
     assert.match(importBlock, /detectMessageTrigger/);
     assert.match(importBlock, /getPayloadSenderId/);
 });
+
+test('server wires non-blocking chat directory refresh from WAHA chats', () => {
+    assert.match(serverJs, /createChatDirectory/);
+    assert.match(serverJs, /refreshChatDirectoryFromWaha/);
+    assert.match(serverJs, /wahaClient\.chats\(\{\s*limit:\s*50\s*\}\)/);
+    assert.match(serverJs, /refreshChatDirectoryFromWaha\(\);/);
+});

@@ -21,11 +21,26 @@ const { withChatLock } = require('../chatContext');
 const { extractDMs, stripDMTags, ensureResponseSafety } = require('./reasoning');
 const {
     collectKnownDmTargets,
+    normalizeDmTarget,
     splitAllowedDMs,
     appendBlockedDmNotice,
 } = require('./dmSafety');
 const { extractMentionIntents, formatMentionedReply } = require('./mentionHelper');
+const { parseOutboundRequests, executeOutboundRequests } = require('./outboundActions');
 const { previewText } = require('./webhookDebug');
+
+const firstText = (...values) => values.find((value) => typeof value === 'string' && value.trim())?.trim() || '';
+
+const groupNameFromPayload = (payload = {}) => {
+    const data = payload._data || {};
+    return firstText(
+        data.chatName,
+        payload.chatName,
+        payload.chat?.name,
+        data.chat?.name,
+        data._chat?.name,
+    );
+};
 
 const createWebhookProcessor = ({
     sendWA,
@@ -41,10 +56,37 @@ const createWebhookProcessor = ({
     botTriggerState,
     groupRosterClient,
     lidResolver, // eslint-disable-line no-unused-vars -- kept in factory contract per Tier-2E plan
+    chatDirectory,
     mentionCooldownStore,
     TARGET_GROUPS,
     MENTION_COOLDOWN_MS,
 }) => {
+    const rememberCurrentChat = ({ isDM, isGroup, chatId, senderName, payload }) => {
+        if (!chatDirectory || !chatId) return;
+        try {
+            if (isGroup) {
+                chatDirectory.upsertGroup({ id: chatId, name: groupNameFromPayload(payload) });
+            } else if (isDM) {
+                chatDirectory.upsertContact({ id: chatId, name: senderName });
+            }
+        } catch (e) {
+            console.error('[ChatDirectory] Failed to update chat:', e?.message || e);
+        }
+    };
+
+    const rememberCanonicalSender = ({ senderJid, canonicalSenderJid, senderName }) => {
+        if (!chatDirectory || !senderJid || !canonicalSenderJid || senderJid === canonicalSenderJid) return;
+        try {
+            chatDirectory.upsertContact({
+                id: senderJid,
+                canonicalId: canonicalSenderJid,
+                name: senderName,
+            });
+        } catch (e) {
+            console.error('[ChatDirectory] Failed to update canonical sender:', e?.message || e);
+        }
+    };
+
     const sendAllowedDMs = async ({ dms, knownTargets, record, source, blockedStage }) => {
         const { allowed, blocked } = splitAllowedDMs(dms, knownTargets);
         for (const dm of allowed) {
@@ -59,11 +101,28 @@ const createWebhookProcessor = ({
         return { allowed, blocked };
     };
 
+    const collectKnownDmTargetsWithDirectory = ({ chatId, senderJid, canonicalSenderJid, roster }) => {
+        const knownTargets = collectKnownDmTargets({ chatId, senderJid, canonicalSenderJid, roster });
+        if (!chatDirectory || typeof chatDirectory.knownDmTargets !== 'function') return knownTargets;
+
+        try {
+            for (const target of chatDirectory.knownDmTargets() || []) {
+                const normalized = normalizeDmTarget(target);
+                if (normalized) knownTargets.add(normalized);
+            }
+        } catch (e) {
+            console.error('[ChatDirectory] Failed to read known DM targets:', e?.message || e);
+        }
+
+        return knownTargets;
+    };
+
     return async ({ body, payload, record, source = 'webhook', force = false }) => {
         const _data = payload._data || {};
         const chatId = getPayloadChatId(payload);
         const isGroup = chatId.endsWith('@g.us');
-        const isTargetGroup = Boolean(TARGET_GROUPS && TARGET_GROUPS.includes(chatId));
+        const allowAllGroups = !Array.isArray(TARGET_GROUPS) || TARGET_GROUPS.length === 0;
+        const isTargetGroup = isGroup && (allowAllGroups || TARGET_GROUPS.includes(chatId));
         // DM covers both legacy @c.us and modern @lid chat IDs from WAHA (not group/broadcast/newsletter).
         const isDM = !isGroup
             && !chatId.endsWith('@broadcast')
@@ -117,6 +176,9 @@ const createWebhookProcessor = ({
         // Sender identification (notifyName lives in _data)
         const senderJid = isGroup ? getPayloadSenderId(payload, chatId) : chatId;
         const senderName = _data.notifyName || payload.notifyName || senderJid.split('@')[0];
+        rememberCurrentChat({ isDM, isGroup, chatId, senderName, payload });
+        const canonicalSenderJid = await resolveCanonicalSender(senderJid);
+        rememberCanonicalSender({ senderJid, canonicalSenderJid, senderName });
 
         // Enrich with roster summary for group chats
         let roster = null;
@@ -145,6 +207,25 @@ const createWebhookProcessor = ({
             });
         }
 
+        const outboundActions = chatDirectory ? parseOutboundRequests(msgBody) : [];
+        if (outboundActions.length > 0) {
+            record(`${source}-outbound-actions-detected`, {
+                count: outboundActions.length,
+                targets: outboundActions.map(action => action.targetText),
+            });
+            const outboundResult = await executeOutboundRequests({
+                actions: outboundActions,
+                directory: chatDirectory,
+                sendWA,
+                originChatId: chatId,
+            });
+            record(`${source}-outbound-actions-completed`, {
+                sent: outboundResult.sent.length,
+                blocked: outboundResult.blocked.length,
+            });
+            return;
+        }
+
         const trigger = detectMessageTrigger({ body: msgBody, payload, state: botTriggerState, isDM });
         if (!trigger) {
             // Proactive pipeline (group only)
@@ -161,7 +242,6 @@ const createWebhookProcessor = ({
                         });
 
                         await withChatLock(chatId, async () => {
-                            const canonicalSenderJid = await resolveCanonicalSender(senderJid);
                             const askAI = makeAskAI(chatId, senderName, canonicalSenderJid);
                             const contextPack = buildContextPack({
                                 chatId,
@@ -193,7 +273,7 @@ const createWebhookProcessor = ({
 
                             if (dms.length > 0) {
                                 record(`${source}-proactive-dms-detected`, { count: dms.length });
-                                const knownTargets = collectKnownDmTargets({
+                                const knownTargets = collectKnownDmTargetsWithDirectory({
                                     chatId,
                                     senderJid,
                                     canonicalSenderJid,
@@ -271,7 +351,6 @@ const createWebhookProcessor = ({
 
         // Process with per-chat lock to prevent race conditions
         await withChatLock(chatId, async () => {
-            const canonicalSenderJid = await resolveCanonicalSender(senderJid);
             const askAI = makeAskAI(chatId, senderName, canonicalSenderJid);
             const contextPack = buildContextPack({
                 chatId,
@@ -307,7 +386,7 @@ const createWebhookProcessor = ({
 
             if (dms.length > 0) {
                 record(`${source}-dms-detected`, { count: dms.length });
-                const knownTargets = collectKnownDmTargets({
+                const knownTargets = collectKnownDmTargetsWithDirectory({
                     chatId,
                     senderJid,
                     canonicalSenderJid,
@@ -346,7 +425,11 @@ const createWebhookProcessor = ({
                         mentionCooldownStore.set(chatId, now);
                         record(`${source}-mentions-applied`, {
                             mentionCount: mentions.length,
-                            intents: intents.map(i => ({ matched: i.matchedText, id: i.participant.id })),
+                            intents: intents.map(i => ({
+                                matched: i.matchedText,
+                                id: i.participant?.id || null,
+                                tagAll: i.tagAll === true,
+                            })),
                         });
                     } else {
                         record(`${source}-mentions-cooldown`, {

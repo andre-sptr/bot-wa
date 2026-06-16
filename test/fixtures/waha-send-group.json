@@ -1,0 +1,15 @@
+{
+  "id": {
+    "fromMe": true,
+    "remote": "120363424766297041@g.us",
+    "id": "3EB02C8F249243772F62BF",
+    "_serialized": "true_120363424766297041@g.us_3EB02C8F249243772F62BF_138384550936741@lid",
+    "participant": "138384550936741@lid"
+  },
+  "body": "Bubu test WAHA grup - ignore",
+  "from": "138384550936741@lid",
+  "to": "120363424766297041@g.us",
+  "participant": "138384550936741@lid",
+  "fromMe": true,
+  "type": "chat"
+}

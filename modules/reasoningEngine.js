@@ -2,7 +2,6 @@
 
 const { buildSystemBlocks } = require('./systemBlocks');
 const { parseBubuReply } = require('./reasoning');
-const { getCurrentMoodContext } = require('./aiAdvanced');
 const { buildBubuPersona } = require('./bubuPersona');
 
 // Determine if a message requires deep reasoning (2-pass) or fast reasoning (1-pass)
@@ -16,7 +15,7 @@ const requiresDeepReasoning = (messageText, contextPack) => {
     if (ambiguousRefs.test(lower)) return true;
 
     // 3. Mentions all (high blast radius)
-    if (/@all\b/i.test(lower)) return true;
+    if (/@(all|semua|everyone)\b/i.test(lower)) return true;
 
     // 4. Complex instructions (long messages)
     if (messageText.length > 200) return true;
@@ -135,9 +134,8 @@ const adaptiveAskAI = async ({
 }) => {
     try {
         const BUBU_PERSONA = buildBubuPersona({ botPhone });
-        const moodContext = getCurrentMoodContext();
         const staticSystemText = `${BUBU_PERSONA}\n`;
-        const dynamicSystemText = `${moodContext}\n\n${systemPrompt || ''}`.trim();
+        const dynamicSystemText = `${systemPrompt || ''}`.trim();
         const systemBlocks = buildSystemBlocks(staticSystemText, dynamicSystemText);
 
         const messages = [];

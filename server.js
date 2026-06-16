@@ -20,11 +20,17 @@ const {
 const { createDebugStore, previewText, safeError } = require('./modules/webhookDebug');
 const { createGroupRosterClient } = require('./modules/groupRoster');
 const { createLidResolver } = require('./modules/lidResolver');
+const { createWahaClient } = require('./modules/wahaClient');
+const { createChatDirectory } = require('./modules/chatDirectory');
 const { guardMentions } = require('./modules/mentionHelper');
 const { createCooldownStore } = require('./modules/cooldownStore');
 const { getMultipleCrypto } = require('./modules/crypto');
 const { createCommandHandler } = require('./modules/commands');
 const { createWebhookProcessor } = require('./modules/webhookProcessor');
+const {
+    createLLMClientWithFallback,
+    createOpenAICompatibleAnthropicAdapter,
+} = require('./modules/llmFallback');
 const { adaptiveAskAI } = require('./modules/reasoningEngine');
 const lifecycle = require('./modules/lifecycle');
 
@@ -36,10 +42,14 @@ const WAHA_URL = process.env.WAHA_URL;
 const WAHA_SESSION = process.env.WAHA_SESSION;
 const WAHA_API_KEY = process.env.WAHA_API_KEY;
 const TARGET_GROUPS = (process.env.GROUP_ID || "").split(",").map(id => id.trim()).filter(Boolean);
+const ALLOW_ALL_GROUPS = TARGET_GROUPS.length === 0;
 const BOT_PHONE = process.env.BOT_PHONE?.replace(/\D/g, '') || '';
 const BOT_LID = process.env.BOT_LID?.replace(/@lid$/i, '') || '';
 const PORT = process.env.PORT || 3000;
 const DEBUG_TOKEN = process.env.DEBUG_TOKEN || '';
+const SUMOPOD_API_KEY = process.env.SUMOPOD_API_KEY || '';
+const SUMOPOD_BASE_URL = process.env.SUMOPOD_BASE_URL || 'https://ai.sumopod.com/v1';
+const SUMOPOD_MODEL = process.env.SUMOPOD_MODEL || 'claude-haiku-4-5';
 // Webhook jadi path utama; polling cuma safety net kalau webhook miss/delay.
 // Default 30s = ~2880 hit/hari ke WAHA /chats. Sebelumnya 5s = ~17k/hari (boros).
 // Override via env WAHA_POLL_INTERVAL_MS kalau butuh refresh lebih cepat di dev.
@@ -52,6 +62,26 @@ const anthropic = new Anthropic({
 });
 
 const webhookDebug = createDebugStore({ maxEntries: 100 });
+const chatDirectory = createChatDirectory();
+
+const sumopodFallbackClient = SUMOPOD_API_KEY ? createOpenAICompatibleAnthropicAdapter({
+    baseUrl: SUMOPOD_BASE_URL,
+    apiKey: SUMOPOD_API_KEY,
+    model: SUMOPOD_MODEL,
+    httpPost: (url, body, opts) => axios.post(url, body, opts),
+}) : null;
+
+const llmClient = createLLMClientWithFallback({
+    primary: anthropic,
+    fallback: sumopodFallbackClient,
+    onFallback: (error) => {
+        webhookDebug.record('llm-fallback-sumopod', {
+            error: safeError(error),
+            model: SUMOPOD_MODEL,
+        });
+        console.warn('[LLM] Anthropic failed, using Sumopod fallback:', error?.message || error);
+    },
+});
 
 // Section: RATE LIMITER
 const rateLimitMap = new Map();
@@ -89,7 +119,7 @@ const makeAskAI = (chatId, senderName, senderJid = null) => async (systemPrompt,
         }
 
         const aiReply = await adaptiveAskAI({
-            anthropic,
+            anthropic: llmClient,
             model: process.env.ANTHROPIC_MODEL,
             botPhone: BOT_PHONE,
             systemPrompt,
@@ -124,6 +154,14 @@ const groupRosterClient = (WAHA_URL && WAHA_SESSION) ? createGroupRosterClient({
     httpGet: (url, opts) => axios.get(url, opts),
 }) : null;
 
+const wahaClient = (WAHA_URL && WAHA_SESSION) ? createWahaClient({
+    wahaUrl: WAHA_URL,
+    session: WAHA_SESSION,
+    apiKey: WAHA_API_KEY || '',
+    httpGet: (url, opts) => axios.get(url, opts),
+    httpPost: (url, body, opts) => axios.post(url, body, opts),
+}) : null;
+
 // Resolve @lid (sender grup) → @c.us (nomor kanonik) untuk unified cross-context (Gap #1).
 const lidResolver = (WAHA_URL && WAHA_SESSION) ? createLidResolver({
     wahaUrl: WAHA_URL,
@@ -149,6 +187,61 @@ const debugId = (value) => {
     if (typeof value === 'number') return String(value);
     if (typeof value === 'object') return value._serialized || value.id || value.ID || null;
     return null;
+};
+
+const rememberChatDirectoryEntry = (chat = {}) => {
+    const payload = chat.lastMessage || {};
+    const chatId = getPayloadChatId(payload) || debugId(chat.id) || debugId(chat.id?._serialized) || '';
+    if (!chatId) return null;
+
+    const name = [
+        chat.name,
+        chat.fullName,
+        chat.contact?.name,
+        chat.contact?.pushname,
+        payload.chatName,
+        payload.chat?.name,
+        payload._data?.chatName,
+        payload._data?.chat?.name,
+        payload._data?._chat?.name,
+    ].find(value => typeof value === 'string' && value.trim())?.trim() || '';
+
+    if (chatId.endsWith('@g.us')) {
+        return chatDirectory.upsertGroup({ id: chatId, name });
+    }
+
+    if (chatId.endsWith('@broadcast') || chatId.endsWith('@newsletter')) return null;
+
+    return chatDirectory.upsertContact({
+        id: chatId,
+        canonicalId: chatId.endsWith('@c.us') ? chatId : undefined,
+        name,
+        pushname: chat.pushname || chat.contact?.pushname || '',
+        shortName: chat.shortName || chat.contact?.shortName || '',
+    });
+};
+
+const refreshChatDirectoryFromWaha = async () => {
+    if (!wahaClient) return;
+    try {
+        const data = await wahaClient.chats({ limit: 50 });
+        const chats = Array.isArray(data) ? data : [];
+        let remembered = 0;
+        for (const chat of chats) {
+            try {
+                if (rememberChatDirectoryEntry(chat)) remembered += 1;
+            } catch (e) {
+                webhookDebug.record('chat-directory-entry-refresh-failed', {
+                    error: safeError(e),
+                    chatId: debugId(chat?.id) || null,
+                });
+            }
+        }
+        webhookDebug.record('chat-directory-refresh-ok', { count: chats.length, remembered });
+    } catch (error) {
+        webhookDebug.record('chat-directory-refresh-failed', { error: safeError(error) });
+        console.error('[ChatDirectory] Startup refresh failed:', error?.message || error);
+    }
 };
 
 const processedIncomingMessageIds = new Set();
@@ -205,11 +298,16 @@ const debugStatus = () => ({
         wahaUrl: safeWahaUrl(),
         wahaSession: WAHA_SESSION || null,
         targetGroups: TARGET_GROUPS,
+        allowAllGroups: ALLOW_ALL_GROUPS,
         botPhone: maskPhone(BOT_PHONE),
         botLid: BOT_LID || null,
         anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
+        sumopodBaseUrl: SUMOPOD_BASE_URL,
+        sumopodModel: SUMOPOD_MODEL,
+        llmFallbackEnabled: Boolean(sumopodFallbackClient),
         hasWahaApiKey: Boolean(WAHA_API_KEY),
         hasAnthropicApiKey: Boolean(process.env.ANTHROPIC_API_KEY),
+        hasSumopodApiKey: Boolean(SUMOPOD_API_KEY),
         debugTokenRequired: Boolean(DEBUG_TOKEN),
     },
     state: summarizeBotState(),
@@ -238,6 +336,14 @@ const summarizePayload = (body = {}, payload = {}, chatId = '', senderJid = '') 
 };
 
 const wahaGet = async (path, params = {}) => {
+    if (wahaClient && path === `/api/${WAHA_SESSION}/chats`) {
+        return wahaClient.chats({ limit: params.limit });
+    }
+
+    if (wahaClient && path === `/api/sessions/${WAHA_SESSION}`) {
+        return wahaClient.sessionStatus();
+    }
+
     const res = await axios.get(`${WAHA_URL}${path}`, {
         params,
         timeout: 10000,
@@ -265,6 +371,15 @@ const analyzeWahaMessage = (payload = {}, chat = null) => {
 };
 
 const sendWA = async (text, chatId = TARGET_GROUPS[0], mentions = []) => {
+    if (!chatId) {
+        const error = { message: 'missing chatId' };
+        webhookDebug.record('send-skipped-missing-chat-id', {
+            textPreview: previewText(text),
+            error,
+        });
+        return { ok: false, error };
+    }
+
     try {
         const body = {
             session: WAHA_SESSION,
@@ -274,21 +389,23 @@ const sendWA = async (text, chatId = TARGET_GROUPS[0], mentions = []) => {
         const safeMentions = guardMentions(mentions);
         if (safeMentions.length > 0) body.mentions = safeMentions;
 
-        const res = await axios.post(`${WAHA_URL}/api/sendText`, body, {
-            headers: { 'X-Api-Key': WAHA_API_KEY, 'Content-Type': 'application/json' }
-        });
+        const data = wahaClient
+            ? await wahaClient.sendText(text, chatId, safeMentions)
+            : (await axios.post(`${WAHA_URL}/api/sendText`, body, {
+                headers: { 'X-Api-Key': WAHA_API_KEY, 'Content-Type': 'application/json' }
+            })).data;
 
-        const tracked = rememberBotMessage(botTriggerState, res.data);
+        const tracked = rememberBotMessage(botTriggerState, data);
         webhookDebug.record('send-ok', {
             chatId,
             textPreview: previewText(text),
-            responseId: res.data?.id?._serialized || res.data?.id || null,
+            responseId: data?.id?._serialized || data?.id || null,
             trackedMessageIds: tracked.messageIds,
             trackedBotIdentifiers: tracked.botIdentifiers,
             mentionCount: safeMentions.length,
             state: summarizeBotState(),
         });
-        return { ok: true, data: res.data, tracked };
+        return { ok: true, data, tracked };
     } catch (e) {
         const error = safeError(e);
         webhookDebug.record('send-failed', {
@@ -361,6 +478,7 @@ const processIncomingPayload = createWebhookProcessor({
     botTriggerState,
     groupRosterClient,
     lidResolver,
+    chatDirectory,
     mentionCooldownStore,
     TARGET_GROUPS,
     MENTION_COOLDOWN_MS,
@@ -505,11 +623,15 @@ app.post('/debug/waha/process-latest', requireDebugAccess, async (req, res) => {
         const limit = Math.min(parseInt(req.query.limit || '10', 10) || 10, 50);
         const data = await wahaGet(`/api/${WAHA_SESSION}/chats`, { limit });
         const chats = Array.isArray(data) ? data : [];
-        const target = chats.find(chat => TARGET_GROUPS.includes(getPayloadChatId(chat.lastMessage || {})));
+        const target = chats.find(chat => {
+            const cid = getPayloadChatId(chat.lastMessage || {});
+            return cid.endsWith('@g.us') && (ALLOW_ALL_GROUPS || TARGET_GROUPS.includes(cid));
+        });
 
         if (!target?.lastMessage) {
-            record('manual-process-missing-target', { groupId: TARGET_GROUPS, count: chats.length });
-            return res.status(404).json({ ...debugStatus(), error: `No lastMessage found for ${TARGET_GROUPS}` });
+            record('manual-process-missing-target', { groupId: TARGET_GROUPS, allowAllGroups: ALLOW_ALL_GROUPS, count: chats.length });
+            const targetLabel = ALLOW_ALL_GROUPS ? 'any group' : TARGET_GROUPS.join(',');
+            return res.status(404).json({ ...debugStatus(), error: `No lastMessage found for ${targetLabel}` });
         }
 
         await processIncomingPayload({
@@ -562,9 +684,8 @@ const pollWahaChats = async () => {
             .filter(item => {
                 if (!item.payload) return false;
                 const cid = getPayloadChatId(item.payload);
-                if (TARGET_GROUPS.includes(cid)) return true; // target group
+                if (cid.endsWith('@g.us')) return ALLOW_ALL_GROUPS || TARGET_GROUPS.includes(cid);
                 // DM: not a group, not broadcast, not newsletter
-                if (cid.endsWith('@g.us')) return false;
                 if (cid.endsWith('@broadcast')) return false;
                 if (cid.endsWith('@newsletter')) return false;
                 return cid.length > 0;
@@ -597,6 +718,7 @@ const pollWahaChats = async () => {
 
 // Section: INIT
 loadAndStartReminders(sendWA);
+refreshChatDirectoryFromWaha();
 
 let pollInterval = null;
 if (WAHA_POLL_INTERVAL_MS && WAHA_POLL_INTERVAL_MS >= 1000) {

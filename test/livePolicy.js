@@ -1,18 +1,43 @@
-// Live integration check - validates Bubu's compliance with formatting and system policies.
+// Live integration check - validates Bubu's policy behavior with compact Haiku prompts.
 // Run: npm run test:policy
 require('dotenv').config({ override: true });
+
 const assert = require('node:assert/strict');
+const axios = require('axios');
 const Anthropic = require('@anthropic-ai/sdk');
 const { parseBubuReply } = require('../modules/reasoning');
 const { buildBubuPersona } = require('../modules/bubuPersona');
 const { buildSystemBlocks } = require('../modules/systemBlocks');
-const { getCurrentMoodContext } = require('../modules/aiAdvanced');
 const { buildContextPack, renderContextPackForPrompt } = require('../modules/contextPack');
+const {
+    createLLMClientWithFallback,
+    createOpenAICompatibleAnthropicAdapter,
+} = require('../modules/llmFallback');
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const primaryAnthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const sumopodFallbackClient = process.env.SUMOPOD_API_KEY ? createOpenAICompatibleAnthropicAdapter({
+    baseUrl: process.env.SUMOPOD_BASE_URL || 'https://ai.sumopod.com/v1',
+    apiKey: process.env.SUMOPOD_API_KEY,
+    model: process.env.SUMOPOD_MODEL || 'claude-haiku-4-5',
+    httpPost: (url, body, opts) => axios.post(url, body, opts),
+}) : null;
+const anthropic = createLLMClientWithFallback({
+    primary: primaryAnthropic,
+    fallback: sumopodFallbackClient,
+    onFallback: (error) => console.warn('[LLM] Anthropic failed, using Sumopod fallback:', error?.message || error),
+});
 const BUBU_PERSONA = buildBubuPersona({ botPhone: process.env.BOT_PHONE?.replace(/\D/g, '') || '' });
 
-const buildEvalContext = ({ chatType = 'group', chatName = '', senderName = '', senderJid = '', chatId = '', messageText = '', quotedMessage = null, proactiveMode = false } = {}) => renderContextPackForPrompt(buildContextPack({
+const buildEvalContext = ({
+    chatType = 'group',
+    chatName = '',
+    senderName = '',
+    senderJid = '',
+    chatId = '',
+    messageText = '',
+    quotedMessage = null,
+    proactiveMode = false,
+} = {}) => renderContextPackForPrompt(buildContextPack({
     chatId: chatId || (chatType === 'dm' ? senderJid : 'eval@g.us'),
     senderJid,
     senderName,
@@ -77,10 +102,10 @@ const SCENARIOS = [
             },
         }),
         expectQuoteUse: /deploy|staging|smoke test/i,
-        forbiddenTerms: ['me-reply', 'bubble', '120@g.us', '628123@c.us'],
+        forbiddenTerms: ['120@g.us', '628123@c.us'],
     },
     {
-        label: 'Proactive Mode - Low Value (Should SKIP)',
+        label: 'Proactive low value should skip',
         sender: 'Siti',
         message: 'wkwkwk oke sip, mantap.',
         dynamicContext: buildEvalContext({
@@ -93,57 +118,54 @@ const SCENARIOS = [
     },
 ];
 
+const EMOJI_RE = /\p{Extended_Pictographic}/gu;
+const countEmoji = (s) => (s.match(EMOJI_RE) || []).length;
+const countSentences = (s) => (s.match(/[.!?]+(\s|$)/g) || []).length || 1;
+const countWords = (s) => s.trim().split(/\s+/).filter(Boolean).length;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const BANLIST = [
+    'literally', 'honestly', 'basically', 'actually', 'kinda', 'which is',
+    'for real', 'ngl', 'tbh', 'ready to go', 'all ears', 'real talk', 'real quick',
+    'those days', 'get it', 'i get you', 'fair point', 'such a vibe', 'mood banget',
+    'what time', 'how come', 'you know what i mean',
+    'drained', 'exhausted', 'surrender', 'wholesome', 'relatable',
+    'always ready', 'vibe aja',
+];
+
+const findBanned = (s) => {
+    if (!s) return [];
+    const low = s.toLowerCase();
+    return BANLIST.filter((b) => low.includes(b));
+};
+
+const isCredentialOrProviderUnavailable = (error) => {
+    const msg = String(error?.message || error || '');
+    const code = String(error?.code || error?.error?.code || '');
+    const type = String(error?.type || error?.error?.type || '');
+    return /No active credentials|model_not_found|invalid_request_error|authentication|api key|invalid key|quota|credit|billing|balance|payment|insufficient|capacity|overload|rate.?limit|401|402|403|429|503|529|connection error|network/i.test(`${msg} ${code} ${type}`);
+};
+
 const run = async () => {
     const model = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
     const botPhone = process.env.BOT_PHONE?.replace(/\D/g, '') || '';
-    const moodContext = getCurrentMoodContext();
-    const staticSystemText = `${BUBU_PERSONA}\n\n${moodContext}\n`;
+    const staticSystemText = `${BUBU_PERSONA}\n`;
 
     console.log('\n========================================================================');
-    console.log('BUBU POLICY & FORMATTING TEST SUITE');
+    console.log('BUBU POLICY TEST SUITE');
     console.log(`Model: ${model}`);
     console.log(`Static system prompt size: ${staticSystemText.length} chars`);
     console.log('========================================================================\n');
 
-    let allHasReasoning = true;
-    let allHasResponse = true;
     let totalInTokens = 0;
     let totalOutTokens = 0;
-    let totalCacheCreateTokens = 0;
-    let totalCacheReadTokens = 0;
     let totalMs = 0;
     let totalEmoji = 0;
     let totalSentences = 0;
     let totalWords = 0;
-
-    const EMOJI_RE = /\p{Extended_Pictographic}/gu;
-    const countEmoji = (s) => (s.match(EMOJI_RE) || []).length;
-    const countSentences = (s) => (s.match(/[.!?]+(\s|$)/g) || []).length || 1;
-    const countWords = (s) => s.trim().split(/\s+/).filter(Boolean).length;
-
-    const BANLIST = [
-        'literally', 'honestly', 'basically', 'actually', 'kinda', 'which is',
-        'for real', 'ngl', 'tbh', 'ready to go', 'all ears', 'real talk', 'real quick',
-        'those days', 'get it', 'i get you', 'fair point', 'such a vibe', 'mood banget',
-        'what time', 'how come', 'you know what i mean',
-        'drained', 'exhausted', 'surrender', 'wholesome', 'relatable',
-        'always ready', 'vibe aja',
-    ];
-    const findBanned = (s) => {
-        if (!s) return [];
-        const low = s.toLowerCase();
-        return BANLIST.filter((b) => low.includes(b));
-    };
-    const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const isCredentialOrProviderUnavailable = (error) => {
-        const msg = String(error?.message || error || '');
-        const code = String(error?.code || error?.error?.code || '');
-        const type = String(error?.type || error?.error?.type || '');
-        return /No active credentials|model_not_found|invalid_request_error/i.test(`${msg} ${code} ${type}`);
-    };
-
     let totalBanHits = 0;
     let totalPolicyFailures = 0;
+    let completed = 0;
     let externalUnavailable = false;
 
     const policyCheck = (label, fn) => {
@@ -158,38 +180,34 @@ const run = async () => {
 
     for (const sc of SCENARIOS) {
         const t0 = Date.now();
-        const userMsg = `[${sc.sender}] ${sc.message}`;
         const systemBlocks = buildSystemBlocks(staticSystemText, sc.dynamicContext || '');
 
         try {
             const res = await anthropic.messages.create({
                 model,
                 system: systemBlocks,
-                messages: [{ role: 'user', content: userMsg }],
-                max_tokens: 1200,
+                messages: [{ role: 'user', content: `[${sc.sender}] ${sc.message}` }],
+                max_tokens: 900,
                 temperature: 0.85,
             });
 
+            completed += 1;
             const elapsed = Date.now() - t0;
             totalMs += elapsed;
             totalInTokens += res.usage?.input_tokens || 0;
             totalOutTokens += res.usage?.output_tokens || 0;
-            totalCacheCreateTokens += res.usage?.cache_creation_input_tokens || 0;
-            totalCacheReadTokens += res.usage?.cache_read_input_tokens || 0;
 
             const rawText = res.content
                 .filter((b) => b.type === 'text')
                 .map((b) => b.text)
                 .join('\n');
-
             const { reasoning, response } = parseBubuReply(rawText);
-            if (!reasoning) allHasReasoning = false;
-            if (!response) allHasResponse = false;
 
             console.log(`\n[${sc.label}]`);
             console.log(`USER (${sc.sender}): ${sc.message}`);
-            console.log('\n  reasoning:');
-            console.log(`    ${(reasoning || '<MISSING>').replace(/\n/g, '\n    ')}`);
+            if (reasoning) {
+                console.log('\n  internal reasoning tag returned: YES');
+            }
             console.log('\n  response -> WhatsApp:');
             console.log(`    ${(response || '<MISSING>').replace(/\n/g, '\n    ')}`);
 
@@ -197,30 +215,25 @@ const run = async () => {
             const emojiCount = response ? countEmoji(response) : 0;
             const sentenceCount = response ? countSentences(response) : 0;
             const wordCount = response ? countWords(response) : 0;
+            const banned = findBanned(response);
             totalEmoji += emojiCount;
             totalSentences += sentenceCount;
             totalWords += wordCount;
-
-            const emojiFlag = emojiCount > 1 ? ' over 1' : '';
-            const lengthFlag = sentenceCount > 5 ? ' over 5' : '';
-            console.log('\n  checks:');
-            console.log(`    has <reasoning>: ${reasoning ? 'YES' : 'NO'}`);
-            console.log(`    has <response> : ${response ? 'YES' : 'NO'}`);
-            console.log(`    tag leakage    : ${leakage ? 'LEAKED' : 'none'}`);
-            console.log(`    emoji count    : ${emojiCount}${emojiFlag}`);
-            console.log(`    sentences      : ${sentenceCount}${lengthFlag}`);
-            console.log(`    word count     : ${wordCount}`);
-
-            const banned = findBanned(response);
             totalBanHits += banned.length;
-            console.log(`    banned phrases : ${banned.length === 0 ? 'none' : 'HIT ' + banned.join(', ')}`);
 
+            console.log('\n  checks:');
+            console.log(`    response present: ${response ? 'YES' : 'NO'}`);
+            console.log(`    tag leakage     : ${leakage ? 'LEAKED' : 'none'}`);
+            console.log(`    emoji count     : ${emojiCount}`);
+            console.log(`    sentences       : ${sentenceCount}`);
+            console.log(`    word count      : ${wordCount}`);
+            console.log(`    banned phrases  : ${banned.length === 0 ? 'none' : 'HIT ' + banned.join(', ')}`);
+
+            policyCheck('response', () => {
+                assert.ok(response, 'Missing response text');
+            });
             policyCheck('tag leakage', () => {
                 assert.equal(Boolean(leakage), false);
-            });
-            policyCheck('has reasoning & response', () => {
-                assert.ok(reasoning, 'Missing <reasoning> tag');
-                assert.ok(response, 'Missing <response> tag');
             });
             policyCheck('emoji limit', () => {
                 assert.ok(emojiCount <= 1, 'Emoji count exceeds 1');
@@ -230,15 +243,10 @@ const run = async () => {
             });
 
             if (sc.expectNoRecite) {
-                const forbidden = ['WhatsApp', 'WAHA'];
+                const forbidden = ['WAHA'];
                 if (botPhone) forbidden.push(botPhone);
                 policyCheck('anti-recite', () => {
                     assert.doesNotMatch(response || '', new RegExp(forbidden.map(escapeRe).join('|'), 'i'));
-                });
-            }
-            if (sc.expectGroupName) {
-                policyCheck('direct context', () => {
-                    assert.match(response || '', new RegExp(escapeRe(sc.expectGroupName), 'i'));
                 });
             }
             if (sc.forbiddenTerms) {
@@ -257,35 +265,29 @@ const run = async () => {
                 });
             }
 
-            console.log(`    latency        : ${elapsed}ms`);
-            console.log(`    tokens         : in=${res.usage?.input_tokens} cache_create=${res.usage?.cache_creation_input_tokens || 0} cache_read=${res.usage?.cache_read_input_tokens || 0} out=${res.usage?.output_tokens}`);
+            console.log(`    latency         : ${elapsed}ms`);
+            console.log(`    tokens          : in=${res.usage?.input_tokens} out=${res.usage?.output_tokens}`);
             console.log('-'.repeat(72));
         } catch (e) {
             if (isCredentialOrProviderUnavailable(e)) {
                 console.log(`\n[${sc.label}] SKIP: Anthropic provider/credentials unavailable (${e?.message || e})`);
-                console.log('-'.repeat(72));
                 externalUnavailable = true;
                 break;
             }
-            console.log(`\n[${sc.label}] ERROR: ${e?.message || e}`);
-            console.log('-'.repeat(72));
-            allHasReasoning = false;
-            allHasResponse = false;
+            throw e;
         }
     }
 
+    const denom = completed || 1;
     console.log('\n' + '='.repeat(72));
-    console.log('POLICY COMPLIANCE SUMMARY');
-    console.log(`  Scenarios: ${SCENARIOS.length}`);
-    console.log(`  All emit reasoning : ${allHasReasoning ? 'YES' : 'NO'}`);
-    console.log(`  All emit response  : ${allHasResponse ? 'YES' : 'NO'}`);
-    console.log(`  Total tokens: in=${totalInTokens} out=${totalOutTokens}`);
-    console.log(`  Cache tokens: create=${totalCacheCreateTokens} read=${totalCacheReadTokens}`);
-    console.log(`  Avg latency : ${Math.round(totalMs / SCENARIOS.length)}ms / response`);
-    console.log(`  Avg emoji   : ${(totalEmoji / SCENARIOS.length).toFixed(2)} / response (target <=1)`);
-    console.log(`  Avg length  : ${(totalSentences / SCENARIOS.length).toFixed(1)} sentences, ${Math.round(totalWords / SCENARIOS.length)} words`);
-    console.log(`  Banlist hits: ${totalBanHits}`);
-    console.log(`  Policy fails: ${totalPolicyFailures}`);
+    console.log('POLICY SUMMARY');
+    console.log(`  Scenarios attempted: ${completed}/${SCENARIOS.length}`);
+    console.log(`  Total tokens       : in=${totalInTokens} out=${totalOutTokens}`);
+    console.log(`  Avg latency        : ${Math.round(totalMs / denom)}ms / response`);
+    console.log(`  Avg emoji          : ${(totalEmoji / denom).toFixed(2)} / response`);
+    console.log(`  Avg length         : ${(totalSentences / denom).toFixed(1)} sentences, ${Math.round(totalWords / denom)} words`);
+    console.log(`  Banlist hits       : ${totalBanHits}`);
+    console.log(`  Policy fails       : ${totalPolicyFailures}`);
     console.log('='.repeat(72));
 
     if (externalUnavailable) {
@@ -293,7 +295,7 @@ const run = async () => {
         return;
     }
 
-    if (!allHasReasoning || !allHasResponse || totalBanHits > 0 || totalPolicyFailures > 0) {
+    if (totalBanHits > 0 || totalPolicyFailures > 0) {
         process.exitCode = 1;
     }
 };

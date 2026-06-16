@@ -203,55 +203,6 @@ const summarizeConversation = async (history, askAI) => {
         return null;
     }
 };
-// Dynamic mood system — time-based + random override
-const MOOD_DESCRIPTIONS = {
-    excited: 'lagi semangat, reply lebih antusias, suka nanya balik',
-    chill: 'santai, jawabnya pendek-pendek, cool',
-    focused: 'serius tapi tetap casual, langsung ke inti',
-    bosan: 'lagi bosen, suka bikin joke random atau meledak ke topik lain',
-    sleepy: 'ngantuk, mager, reply lebih pendek dari biasanya',
-    bete: 'agak nyinyir tapi tetep helpful, sotoy level naik',
-    hype: 'lagi high energy, excited banget, suka all caps sesekali',
-};
-
-const MOOD_BY_HOUR = [
-    { start: 6,  end: 10, mood: 'excited' },
-    { start: 10, end: 15, mood: 'chill' },
-    { start: 15, end: 17, mood: 'focused' },
-    { start: 17, end: 19, mood: 'bosan' },
-    { start: 19, end: 24, mood: 'sleepy' },
-    { start: 0,  end: 6,  mood: 'sleepy' },
-];
-
-const moodForHour = (hour) => {
-    for (const { start, end, mood } of MOOD_BY_HOUR) {
-        if (start <= end) {
-            if (hour >= start && hour < end) return mood;
-        } else {
-            if (hour >= start || hour < end) return mood;
-        }
-    }
-    return 'chill';
-};
-
-const SPECIAL_MOODS = ['bete', 'hype'];
-
-const getCurrentMoodContext = () => {
-    const now = new Date();
-    const hour = parseInt(
-        now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', hour: 'numeric', hour12: false })
-    );
-    const defaultMood = moodForHour(hour);
-
-    const useSpecial = Math.random() < 0.25;
-    const mood = useSpecial
-        ? SPECIAL_MOODS[Math.floor(Math.random() * SPECIAL_MOODS.length)]
-        : defaultMood;
-
-    const desc = MOOD_DESCRIPTIONS[mood] || '';
-    return `[Mood Bubu sekarang: ${mood} — ${desc}]`;
-};
-
 module.exports = {
     classifyIntent,
     autoCategorize,
@@ -259,6 +210,4 @@ module.exports = {
     buildRuntimeChatContext,
     contextAwareResponse,
     summarizeConversation,
-    getCurrentMoodContext,
-    moodForHour,
 };

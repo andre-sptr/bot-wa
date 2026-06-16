@@ -1,26 +1,12 @@
 const DEFAULT_MAX_TRACKED_IDS = 200;
 
-const asString = (value) => {
-    if (!value) return '';
-    if (typeof value === 'string') return value;
-    if (typeof value === 'number') return String(value);
-    if (typeof value === 'object') {
-        const nested = value._serialized || value.serialized || value.id || value.ID || value.Id || '';
-        return nested === value ? '' : asString(nested);
-    }
-    return '';
-};
-
-const normalizeIdText = (value) => asString(value).trim().toLowerCase();
-
-const normalizeContactId = (value) => {
-    const id = normalizeIdText(value).replace(/^@/, '');
-    if (!id) return '';
-    if (id.endsWith('@s.whatsapp.net')) {
-        return `${id.slice(0, -'@s.whatsapp.net'.length)}@c.us`;
-    }
-    return id;
-};
+const {
+    asSerializedId,
+    normalizeContactId,
+    normalizeIdText,
+    normalizeWahaMessage,
+    parseSerializedMessageId,
+} = require('./wahaIdentity');
 
 const contactVariants = (value) => {
     const normalized = normalizeContactId(value);
@@ -82,16 +68,28 @@ const messageIdCandidates = (value) => {
     if (!id) return [];
 
     const candidates = new Set([id]);
-    const parts = id.split('_');
-    if (parts.length >= 3 && parts[2]) candidates.add(parts[2]);
+    const parsed = parseSerializedMessageId(value);
+    if (parsed.messageId) {
+        candidates.add(parsed.messageId);
+        candidates.add(normalizeIdText(parsed.messageId));
+    }
     return [...candidates];
 };
 
 const isOutgoingMessage = (payload = {}) => {
+    const data = payload._data || {};
+    const parsedId = parseSerializedMessageId(
+        asSerializedId(payload.id?._serialized) ||
+        asSerializedId(payload.id) ||
+        asSerializedId(data.id?._serialized) ||
+        asSerializedId(data.id)
+    );
+
     return payload.fromMe === true ||
         payload.id?.fromMe === true ||
         payload._data?.id?.fromMe === true ||
-        payload._data?.fromMe === true;
+        payload._data?.fromMe === true ||
+        parsedId.fromMe === true;
 };
 
 const addBotIdentifier = (state, value) => {
@@ -110,7 +108,7 @@ const addBotIdentifier = (state, value) => {
 
 const rememberBotMessage = (state, message) => {
     const added = { messageIds: [], botIdentifiers: [] };
-    const idValue = asString(message?._data?.id) || asString(message?.id) || asString(message);
+    const idValue = asSerializedId(message?._data?.id) || asSerializedId(message?.id) || asSerializedId(message);
 
     for (const candidate of messageIdCandidates(idValue)) {
         if (addLimited(state.recentBotMessageIds, candidate, state.maxTrackedIds)) {
@@ -118,10 +116,9 @@ const rememberBotMessage = (state, message) => {
         }
     }
 
-    const idText = normalizeIdText(idValue);
-    const idParts = idText.split('_');
-    if (idParts.length >= 4) {
-        added.botIdentifiers.push(...addBotIdentifier(state, idParts.slice(3).join('_')));
+    const parsedId = parseSerializedMessageId(idValue);
+    if (parsedId.participant && parsedId.participant.includes('@')) {
+        added.botIdentifiers.push(...addBotIdentifier(state, parsedId.participant));
     }
 
     for (const value of [
@@ -139,35 +136,14 @@ const rememberBotMessage = (state, message) => {
 };
 
 const getPayloadChatId = (payload = {}) => {
-    const data = payload._data || {};
-    const candidates = [
-        payload.chatId,
-        payload.from,
-        payload.to,
-        data.id?.remote,
-        data.key?.remoteJid,
-        data.Info?.Chat,
-        data.chatId,
-    ].map(normalizeIdText).filter(Boolean);
-
-    return candidates.find(id => id.endsWith('@g.us')) || candidates[0] || '';
+    return normalizeWahaMessage(payload).chatId;
 };
 
 const getPayloadSenderId = (payload = {}, chatId = '') => {
-    const data = payload._data || {};
     const normalizedChatId = normalizeIdText(chatId);
-    const candidates = [
-        payload.participant,
-        payload.author,
-        data.author,
-        data.id?.participant,
-        data.Info?.Sender,
-        payload.from,
-    ].map(normalizeContactId).filter(Boolean);
+    const normalized = normalizeWahaMessage({ ...payload, chatId: payload.chatId || normalizedChatId });
 
-    return candidates.find(id => id !== normalizedChatId && !id.endsWith('@g.us')) ||
-        normalizedChatId ||
-        '';
+    return normalized.senderJid || normalizedChatId || '';
 };
 
 const collectMentionValues = (value, out = []) => {
@@ -304,18 +280,22 @@ const quotedTextFrom = (message = {}) => {
         message._data?.body,
         message._data?.text,
         message._data?.caption,
-    ].map(asString).find(text => text.trim())?.trim() || '';
+    ].map(asSerializedId).find(text => text.trim())?.trim() || '';
 };
 
 const quotedAuthorFrom = (message = {}) => {
-    return [
+    const rawAuthor = [
         message.participant,
         message.from,
         message.author,
         message._data?.participant,
         message._data?.author,
         message._data?.id?.participant,
-    ].map(normalizeContactId).find(Boolean) || '';
+    ].map(asSerializedId).map(value => value.trim()).find(Boolean) || '';
+
+    if (!rawAuthor) return '';
+    if (/@|^\d+$/.test(rawAuthor)) return normalizeContactId(rawAuthor);
+    return rawAuthor;
 };
 
 const getQuotedMessageContext = (payload = {}) => {

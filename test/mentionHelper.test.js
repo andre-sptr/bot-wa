@@ -132,41 +132,34 @@ test('extractMentionIntents handles @Name with multiple trailing punctuation', (
 
 // ── TAG ALL ─────────────────────────────────────────────────────
 
-test('extractMentionIntents with @all returns all mentionable participants', () => {
+test('extractMentionIntents with @all returns literal tag-all intent', () => {
     const intents = extractMentionIntents('Hey @all cek semua', ROSTER);
-    // Should include all mentionable (@c.us) participants, NOT @lid
-    const mentionableCount = ROSTER.filter(p => phoneMentionable(p.id)).length;
-    assert.equal(intents.length, mentionableCount);
-    // All should be tagged via '@all' matchedText
-    assert.ok(intents.every(i => i.matchedText === '@all'));
+    assert.deepEqual(intents, [{ matchedText: '@all', participant: null, tagAll: true }]);
 });
 
-test('extractMentionIntents with @semua returns all mentionable participants', () => {
+test('extractMentionIntents with @semua returns literal tag-all intent', () => {
     const intents = extractMentionIntents('Hey @semua cek ya', ROSTER);
-    const mentionableCount = ROSTER.filter(p => phoneMentionable(p.id)).length;
-    assert.equal(intents.length, mentionableCount);
+    assert.deepEqual(intents, [{ matchedText: '@semua', participant: null, tagAll: true }]);
 });
 
-test('extractMentionIntents with @everyone returns all mentionable participants', () => {
+test('extractMentionIntents with @everyone returns literal tag-all intent', () => {
     const intents = extractMentionIntents('@everyone meeting jam 3', ROSTER);
-    const mentionableCount = ROSTER.filter(p => phoneMentionable(p.id)).length;
-    assert.equal(intents.length, mentionableCount);
+    assert.deepEqual(intents, [{ matchedText: '@everyone', participant: null, tagAll: true }]);
 });
 
-test('extractMentionIntents with @all excludes @lid participants', () => {
+test('extractMentionIntents with @all does not expand participants', () => {
     const intents = extractMentionIntents('Hey @all', ROSTER);
-    const lidParticipant = intents.find(i => i.participant.id === '138384550936741@lid');
-    assert.equal(lidParticipant, undefined);
+    assert.equal(intents.length, 1);
+    assert.equal(intents[0].participant, null);
+    assert.equal(intents[0].tagAll, true);
 });
 
-test('extractMentionIntents with @Name + @all deduplicates', () => {
+test('extractMentionIntents with @Name + @all keeps named mention and literal tag-all', () => {
     const intents = extractMentionIntents('@Andre tolong @all juga', ROSTER);
-    // Andre should NOT be duplicated — he's already in the individual mention
-    const andreCount = intents.filter(i => i.participant.id === '6281234567890@c.us').length;
-    assert.equal(andreCount, 1);
-    // But all others should be included
-    const mentionableCount = ROSTER.filter(p => phoneMentionable(p.id)).length;
-    assert.equal(intents.length, mentionableCount);
+    assert.equal(intents.length, 2);
+    assert.equal(intents[0].matchedText, '@Andre');
+    assert.equal(intents[0].participant.id, '6281234567890@c.us');
+    assert.deepEqual(intents[1], { matchedText: '@all', participant: null, tagAll: true });
 });
 
 // ── formatMentionedReply ─────────────────────────────────────────
@@ -207,18 +200,13 @@ test('formatMentionedReply returns empty mentions when no intents', () => {
     assert.deepEqual(result.mentions, []);
 });
 
-test('formatMentionedReply handles @all intents correctly', () => {
+test('formatMentionedReply keeps tag-all literal and sends no mentions array', () => {
     const intents = [
-        { matchedText: '@all', participant: { id: '6281234567890@c.us', name: 'Andre' } },
-        { matchedText: '@all', participant: { id: '6289999888877@c.us', name: 'Rina' } },
+        { matchedText: '@semua', participant: null, tagAll: true },
     ];
-    const result = formatMentionedReply('Hey @all cek', intents);
-    // @all should be replaced with @phone1 @phone2
-    assert.ok(result.text.includes('@6281234567890'));
-    assert.ok(result.text.includes('@6289999888877'));
-    assert.equal(result.mentions.length, 2);
-    assert.ok(result.mentions.includes('6281234567890@c.us'));
-    assert.ok(result.mentions.includes('6289999888877@c.us'));
+    const result = formatMentionedReply('Hey @semua cek', intents);
+    assert.equal(result.text, 'Hey @semua cek');
+    assert.deepEqual(result.mentions, []);
 });
 
 // ── guardMentions ────────────────────────────────────────────────

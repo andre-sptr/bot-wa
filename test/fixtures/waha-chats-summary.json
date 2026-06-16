@@ -1,0 +1,27 @@
+[
+  {
+    "id": {
+      "_serialized": "232701932138501@lid"
+    },
+    "name": "+62 823-8702-5429",
+    "isGroup": false,
+    "timestamp": 1781609002
+  },
+  {
+    "id": {
+      "_serialized": "120363424766297041@g.us"
+    },
+    "name": "Today",
+    "isGroup": true,
+    "groupMetadata": {
+      "participants": [
+        {
+          "id": {
+            "_serialized": "6282387025429@c.us"
+          },
+          "isAdmin": false
+        }
+      ]
+    }
+  }
+]

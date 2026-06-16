@@ -1,10 +1,23 @@
-// Context Pack — single source of truth for building and rendering runtime context.
-// Consolidates scattered context assembly from webhookProcessor, aiAdvanced, chatContext, and server.
+// Context Pack: single source of truth for compact runtime context.
+// The renderer is intentionally terse so Haiku spends attention on the message.
 
 const { getQuotedMessageContext } = require('./messageTriggers');
 const { getRelevantMemory } = require('../chatContext');
 
 const firstText = (...values) => values.find((value) => typeof value === 'string' && value.trim())?.trim() || '';
+
+const compactText = (value, maxLen = 500) => {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    if (text.length <= maxLen) return text;
+    return `${text.slice(0, maxLen - 3)}...`;
+};
+
+const pushLine = (lines, key, value) => {
+    const text = compactText(value, 1000);
+    if (!text) return;
+    lines.push(`${key}=${text}`);
+};
 
 const buildContextPack = ({
     chatId = '',
@@ -52,9 +65,13 @@ const buildContextPack = ({
         time: {},
     };
 
-    // Time block
     const now = new Date();
-    const hour = parseInt(now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', hour: 'numeric', hour12: false }));
+    const hour = parseInt(now.toLocaleString('id-ID', {
+        timeZone: 'Asia/Jakarta',
+        hour: 'numeric',
+        hour12: false,
+    }));
+
     pack.time = {
         now: now.toISOString(),
         jakarta: now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
@@ -63,22 +80,14 @@ const buildContextPack = ({
         greeting: hour < 11 ? 'pagi' : hour < 15 ? 'siang' : hour < 18 ? 'sore' : 'malam',
     };
 
-    // Roster block
     if (isGroup && roster && Array.isArray(roster.participants)) {
-        const names = roster.participants
-            .filter((p) => p.name)
-            .map((p) => `${p.name} (${p.id})`)
-            .slice(0, 20);
+        const participants = roster.participants.slice(0, 20);
         pack.roster = {
-            summary: names.length > 0
-                ? `${roster.participants.length} anggota (${names.join(', ')})`
-                : `${roster.participants.length} anggota`,
-            participants: roster.participants.slice(0, 20),
+            participants,
             participantCount: roster.participants.length,
         };
     }
 
-    // Memory block
     const memoryContext = getRelevantMemory(chatId, messageText, senderJid);
     if (memoryContext) {
         pack.memory = {
@@ -90,72 +99,52 @@ const buildContextPack = ({
 };
 
 const renderContextPackForPrompt = (pack) => {
-    const lines = [];
+    const lines = ['Runtime context, do not announce:'];
+    const senderId = pack.sender?.canonicalJid || pack.sender?.jid || '';
 
-    // Awareness context
-    lines.push('Konteks percakapan saat ini (LATAR BELAKANG, bukan buat diumamin):');
-    lines.push('- Pakai ini untuk memahami situasi, tone, dan audiens.');
-    lines.push('- Jangan sebut DM/grup/nama grup/JID kecuali user nanya langsung.');
+    pushLine(lines, 'chat.type', pack.chat?.type);
+    pushLine(lines, 'chat.name', pack.chat?.name);
+    pushLine(lines, 'chat.id', pack.chat?.id);
+    pushLine(lines, 'sender.name', pack.sender?.name);
+    pushLine(lines, 'sender.jid', pack.sender?.jid);
+    pushLine(lines, 'sender.id', senderId);
+    pushLine(lines, 'mode.trigger', pack.mode?.trigger);
 
-    if (pack.chat.type === 'dm') lines.push('- Tipe chat: chat pribadi (DM).');
-    else if (pack.chat.type === 'group') lines.push('- Tipe chat: grup.');
-    if (pack.chat.name) lines.push(`- Nama grup: ${pack.chat.name}.`);
-    if (pack.sender.name) lines.push(`- Pengirim: ${pack.sender.name}.`);
-    if (pack.sender.jid) lines.push(`- ID pengirim: ${pack.sender.jid}.`);
-    if (pack.sender.canonicalJid) lines.push(`- Nomor DM pengirim saat ini: ${pack.sender.canonicalJid}.`);
-    if (pack.chat.id) lines.push(`- ID chat: ${pack.chat.id}.`);
-    if (pack.sender.canonicalJid) {
-        lines.push(`- Kalau user minta DM dirinya sendiri / gue / aku / saya / pengirim ini, gunakan <dm target="${pack.sender.canonicalJid}">isi pesan</dm>.`);
+    if (pack.chat?.type === 'group') {
+        lines.push('privacy=private memories stay private unless the same person brings them up');
     }
 
-    if (pack.chat.type === 'group') {
-        lines.push('- Privasi: kalau ada ingatan bertanda [privat], itu dari DM pribadi orangnya. JANGAN diungkit di grup kecuali dia sendiri yang mengangkat duluan.');
-    }
+    if (pack.roster?.participants) {
+        const memberText = pack.roster.participants
+            .filter((participant) => participant?.name || participant?.id)
+            .map((participant) => {
+                const name = compactText(participant.name || 'unknown', 80);
+                const id = compactText(participant.id || '', 120);
+                return id ? `${name}:${id}` : name;
+            })
+            .join(', ');
 
-    if (pack.roster?.summary) {
-        lines.push(`- Anggota grup: ${pack.roster.summary}.`);
-        lines.push('- ID dalam tanda kurung adalah nomor/JID yang BOLEH dipakai untuk <dm target="..."> kalau user minta DM anggota grup itu.');
-        lines.push('- Kalau user minta DM seseorang di grup, cari namanya di daftar anggota lalu gunakan ID persis dari tanda kurung sebagai target DM.');
-        lines.push('- Kalau perlu nge-tag seseorang, tulis @NamaOrang di pesanmu. Tag HANYA kalau relevan.');
-        lines.push('- Kalau diminta tag semua orang, tulis @all di pesanmu.');
+        lines.push(`roster.count=${pack.roster.participantCount}`);
+        pushLine(lines, 'roster.members', memberText);
     }
 
     if (pack.message?.quoted?.text) {
         const quoted = pack.message.quoted;
-        // Map JID to sender name if possible, or use raw JID
-        const author = quoted.author || '';
-        const owner = quoted.fromBot ? ' (pesan Bubu)' : '';
-        const maxLen = 500;
-        const normalized = String(quoted.text).replace(/\s+/g, ' ').trim();
-        const text = normalized.length > maxLen ? `${normalized.slice(0, maxLen - 1)}…` : normalized;
-        const fromClause = author ? ` dari ${author}` : '';
-        lines.push(`- Pesan ini me-reply bubble sebelumnya${fromClause}${owner}: "${text}".`);
+        pushLine(lines, 'message.replyTo.text', compactText(quoted.text, 500));
+        pushLine(lines, 'message.replyTo.author', quoted.author);
+        lines.push(`message.replyTo.fromBot=${quoted.fromBot === true ? 'true' : 'false'}`);
     }
 
     if (pack.mode?.proactive) {
-        lines.push('');
-        lines.push('PENTING — MODE PROAKTIF:');
-        lines.push('- Pesan ini TIDAK ditujukan ke kamu. Kamu nimbrung atas inisiatif sendiri.');
-        lines.push('- Jawab HANYA kalau kamu punya value asli untuk ditambahkan (info berguna, jawaban pertanyaan, insight menarik).');
-        lines.push('- Kalau ragu, pesan cuma basa-basi, atau kamu ga punya value → jawab HANYA dengan [SKIP].');
-        lines.push('- Jangan memaksakan diri untuk berkontribusi. Diem lebih baik daripada nimbrung ga jelas.');
+        lines.push('mode.proactive=true');
+        lines.push('mode.proactiveRule=reply only if useful; otherwise answer [SKIP]');
     }
 
-    // Operational context
-    lines.push('');
-    lines.push('Konteks operasional:');
-    lines.push(`- Waktu: ${pack.time.jakarta}`);
-    lines.push(`- Hari: ${pack.time.dayName}`);
-    lines.push(`- Sesi: ${pack.time.greeting}`);
-    if (pack.sender.name) {
-        lines.push(`- Pengirim: ${pack.sender.name}`);
-    }
-
-    if (pack.memory?.relevant) {
-        lines.push('');
-        lines.push('Ingatan percakapan sebelumnya:');
-        lines.push(pack.memory.relevant);
-    }
+    lines.push('capabilities=send_dm, send_group, mention_user, tag_all_literal');
+    pushLine(lines, 'time.jakarta', pack.time?.jakarta);
+    pushLine(lines, 'time.day', pack.time?.dayName);
+    pushLine(lines, 'time.greeting', pack.time?.greeting);
+    pushLine(lines, 'memory.relevant', pack.memory?.relevant);
 
     return lines.join('\n');
 };
