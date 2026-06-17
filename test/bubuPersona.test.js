@@ -39,6 +39,13 @@ test('persona teaches the dm tag mechanism using runtime context ids', () => {
     assert.match(p, /context/i);
 });
 
+test('persona teaches the group send tag mechanism', () => {
+    const p = buildBubuPersona({ botPhone: '628111604384' });
+
+    // To send to another group, the model must emit a <group target="..."> tag.
+    assert.match(p, /<group target="/i);
+});
+
 test('persona does not leak botPhone into static prompt', () => {
     const p = buildBubuPersona({ botPhone: '628111604384' });
     assert.doesNotMatch(p, /628111604384/);

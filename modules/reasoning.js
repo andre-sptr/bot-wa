@@ -46,11 +46,27 @@ const stripDMTags = (text) => {
     return text.replace(/<dm\s+target="([^"]+)">[\s\S]*?<\/dm>/gi, '').trim();
 };
 
+const extractGroupSends = (rawText) => {
+    if (!rawText) return [];
+    const sends = [];
+    const re = /<group\s+target="([^"]+)">([\s\S]*?)<\/group>/gi;
+    let match;
+    while ((match = re.exec(rawText)) !== null) {
+        sends.push({ target: match[1].trim(), message: match[2].trim() });
+    }
+    return sends;
+};
+
+const stripGroupTags = (text) => {
+    if (!text) return text;
+    return text.replace(/<group\s+target="([^"]+)">[\s\S]*?<\/group>/gi, '').trim();
+};
+
 const ensureResponseSafety = (text, isGroup = false) => {
     if (!text) return text;
 
     // Raw control tags must never reach WhatsApp.
-    const hasXmlLeakage = /<reasoning|<\/reasoning|<response|<\/response|<dm/i.test(text);
+    const hasXmlLeakage = /<reasoning|<\/reasoning|<response|<\/response|<dm|<group/i.test(text);
     const hasPrivatLeakage = isGroup && /\[privat\]/i.test(text);
 
     if (hasXmlLeakage || hasPrivatLeakage) {
@@ -72,5 +88,7 @@ module.exports = {
     parseBubuReply,
     extractDMs,
     stripDMTags,
+    extractGroupSends,
+    stripGroupTags,
     ensureResponseSafety,
 };

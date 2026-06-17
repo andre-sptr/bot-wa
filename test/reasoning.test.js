@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseBubuReply, extractTag, stripTagResidue, ensureResponseSafety } = require('../modules/reasoning');
+const { parseBubuReply, extractTag, stripTagResidue, ensureResponseSafety, extractGroupSends, stripGroupTags } = require('../modules/reasoning');
 
 test('parses well-formed reasoning + response', () => {
     const raw = `<reasoning>
@@ -118,5 +118,32 @@ test('ensureResponseSafety sanitizes JIDs instead of blocking normal DM confirma
 
 test('ensureResponseSafety still blocks raw control tags', () => {
     const safe = ensureResponseSafety('Halo <reasoning>internal</reasoning>', true);
+    assert.match(safe, /mending kita bahas detailnya nanti/);
+});
+
+test('extractGroupSends parses group target and message', () => {
+    const sends = extractGroupSends('Oke <group target="TODAY">@Rafly rap</group> beres');
+    assert.deepEqual(sends, [{ target: 'TODAY', message: '@Rafly rap' }]);
+});
+
+test('extractGroupSends parses multiple group sends', () => {
+    const sends = extractGroupSends('<group target="A">satu</group><group target="B">dua</group>');
+    assert.deepEqual(sends, [
+        { target: 'A', message: 'satu' },
+        { target: 'B', message: 'dua' },
+    ]);
+});
+
+test('extractGroupSends returns empty array when no tag present', () => {
+    assert.deepEqual(extractGroupSends('cuma teks biasa'), []);
+    assert.deepEqual(extractGroupSends(''), []);
+});
+
+test('stripGroupTags removes group tags and trims', () => {
+    assert.equal(stripGroupTags('Oke <group target="TODAY">halo</group>'), 'Oke');
+});
+
+test('ensureResponseSafety blocks leaked group tags', () => {
+    const safe = ensureResponseSafety('Halo <group target="TODAY">halo</group>', true);
     assert.match(safe, /mending kita bahas detailnya nanti/);
 });

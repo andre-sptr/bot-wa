@@ -18,7 +18,7 @@ const {
     PROACTIVE_SKIP_MARKER,
 } = require('./proactiveGuard');
 const { withChatLock } = require('../chatContext');
-const { extractDMs, stripDMTags, ensureResponseSafety } = require('./reasoning');
+const { extractDMs, stripDMTags, extractGroupSends, stripGroupTags, ensureResponseSafety } = require('./reasoning');
 const {
     collectKnownDmTargets,
     normalizeDmTarget,
@@ -99,6 +99,84 @@ const createWebhookProcessor = ({
             });
         }
         return { allowed, blocked };
+    };
+
+    // Resolve @lid mention targets to @c.us so they become real WhatsApp mentions
+    // (mentionHelper can only build mentions for phone-based @c.us ids).
+    const resolveMentionLids = async (intents) => {
+        if (!lidResolver) return intents;
+        const out = [];
+        for (const intent of intents) {
+            const id = intent.participant?.id;
+            if (id && String(id).endsWith('@lid')) {
+                try {
+                    const canonical = await lidResolver.canonicalId(id);
+                    if (canonical && String(canonical).endsWith('@c.us')) {
+                        out.push({ ...intent, participant: { ...intent.participant, id: canonical } });
+                        continue;
+                    }
+                } catch { /* leave as-is; it stays literal @Name text */ }
+            }
+            out.push(intent);
+        }
+        return out;
+    };
+
+    // Model-initiated group send: <group target="NAME">message</group>.
+    // Resolves NAME via the chat directory (known groups only), applies the mention
+    // pipeline against the TARGET group's roster, sends, and reports honestly.
+    const sendModelGroupMessages = async ({ groupSends, record, source }) => {
+        const blocked = [];
+        for (const gs of groupSends) {
+            const resolved = chatDirectory?.resolveChat ? chatDirectory.resolveChat(gs.target) : null;
+            if (!resolved || resolved.type !== 'group') {
+                blocked.push({ target: gs.target });
+                record(`${source}-group-send-blocked`, {
+                    target: gs.target,
+                    reason: resolved?.ambiguous ? 'ambiguous' : 'unresolved',
+                });
+                continue;
+            }
+
+            let text = gs.message;
+            let mentions = [];
+            let targetRoster = loadRoster(resolved.id);
+            if (!targetRoster && groupRosterClient) {
+                try {
+                    targetRoster = await fetchAndCacheRoster({ client: groupRosterClient, groupId: resolved.id });
+                } catch (e) {
+                    console.error(`[Roster] Group-send roster fetch failed for ${resolved.id}:`, e?.message);
+                }
+            }
+            if (targetRoster && Array.isArray(targetRoster.participants)) {
+                let intents = extractMentionIntents(text, targetRoster.participants);
+                if (intents.length > 0) {
+                    intents = await resolveMentionLids(intents);
+                    const formatted = formatMentionedReply(text, intents);
+                    text = formatted.text;
+                    mentions = formatted.mentions;
+                }
+            }
+
+            const res = await sendWA(text, resolved.id, mentions);
+            if (res && res.ok === false) {
+                blocked.push({ target: gs.target });
+                record(`${source}-group-send-failed`, { target: resolved.id, error: res.error || null });
+            } else {
+                record(`${source}-group-sent`, {
+                    target: resolved.id,
+                    preview: previewText(text),
+                    mentionCount: mentions.length,
+                });
+            }
+        }
+        return { blocked };
+    };
+
+    const appendBlockedGroupNotice = (reply, blocked) => {
+        if (!Array.isArray(blocked) || blocked.length === 0) return reply;
+        const notice = 'Bubu belum bisa kirim ke grup itu karena grupnya belum dikenal.';
+        return reply ? `${reply}\n\n${notice}` : notice;
     };
 
     const collectKnownDmTargetsWithDirectory = ({ chatId, senderJid, canonicalSenderJid, roster }) => {
@@ -270,8 +348,16 @@ const createWebhookProcessor = ({
                             markProactiveSent(chatId);
 
                             const dms = extractDMs(reply);
+                            const groupSends = extractGroupSends(reply);
                             reply = stripDMTags(reply);
+                            reply = stripGroupTags(reply);
                             reply = ensureResponseSafety(reply, true);
+
+                            if (groupSends.length > 0) {
+                                record(`${source}-proactive-group-sends-detected`, { count: groupSends.length });
+                                const { blocked } = await sendModelGroupMessages({ groupSends, record, source });
+                                reply = appendBlockedGroupNotice(reply, blocked);
+                            }
 
                             if (dms.length > 0) {
                                 record(`${source}-proactive-dms-detected`, { count: dms.length });
@@ -383,7 +469,9 @@ const createWebhookProcessor = ({
             }
 
             const dms = extractDMs(reply);
+            const groupSends = extractGroupSends(reply);
             reply = stripDMTags(reply);
+            reply = stripGroupTags(reply);
             reply = ensureResponseSafety(reply, isGroup);
 
             if (dms.length > 0) {
@@ -402,6 +490,12 @@ const createWebhookProcessor = ({
                     blockedStage: 'dm-blocked',
                 });
                 reply = appendBlockedDmNotice(reply, blocked);
+            }
+
+            if (groupSends.length > 0) {
+                record(`${source}-group-sends-detected`, { count: groupSends.length });
+                const { blocked } = await sendModelGroupMessages({ groupSends, record, source });
+                reply = appendBlockedGroupNotice(reply, blocked);
             }
 
             if (!reply) return; // If the reply was only DMs, don't send an empty message to the chat
