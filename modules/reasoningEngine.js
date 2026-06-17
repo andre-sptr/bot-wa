@@ -3,22 +3,18 @@
 const { buildSystemBlocks } = require('./systemBlocks');
 const { parseBubuReply } = require('./reasoning');
 const { buildBubuPersona } = require('./bubuPersona');
+const { renderContextPackForPrompt } = require('./contextPack');
 
-// Determine if a message requires deep reasoning (2-pass) or fast reasoning (1-pass)
+// Determine if a message requires deep reasoning (2-pass) or fast reasoning (1-pass).
+// Default is the snappy 1-pass path so Bubu replies like a human typing on WhatsApp.
+// Deep reasoning is reserved for cases where a planning pass genuinely changes the outcome.
 const requiresDeepReasoning = (messageText, contextPack) => {
-    // 1. Proactive mode always needs deep reasoning to decide whether to SKIP or genuinely reply
+    // 1. Proactive mode: the planning pass decides SKIP vs a genuinely useful reply.
     if (contextPack?.mode?.proactive) return true;
 
-    // 2. Ambiguous references that likely require heavy memory/history synthesis
-    const lower = messageText.toLowerCase();
-    const ambiguousRefs = /\b(yang kemarin|tadi|itu|dia|maksudnya|soal yang|waktu itu)\b/i;
-    if (ambiguousRefs.test(lower)) return true;
-
-    // 3. Mentions all (high blast radius)
-    if (/@(all|semua|everyone)\b/i.test(lower)) return true;
-
-    // 4. Complex instructions (long messages)
-    if (messageText.length > 200) return true;
+    // 2. Only genuinely long, multi-part instructions justify the 2x latency/cost.
+    //    Casual cues ("tadi/itu/dia"), @all, and moderately long text stay on the fast path.
+    if (typeof messageText === 'string' && messageText.length > 600) return true;
 
     return false;
 };
@@ -135,7 +131,13 @@ const adaptiveAskAI = async ({
     try {
         const BUBU_PERSONA = buildBubuPersona({ botPhone });
         const staticSystemText = `${BUBU_PERSONA}\n`;
-        const dynamicSystemText = `${systemPrompt || ''}`.trim();
+        // Render the runtime context pack into the dynamic (non-cached) block so the model
+        // is actually aware of DM/group, who it's talking to, roster, memory, quoted message,
+        // and its capabilities. A partial pack (no .chat) is ignored to stay backward compatible.
+        const renderedContext = contextPack && contextPack.chat ? renderContextPackForPrompt(contextPack) : '';
+        const dynamicSystemText = [renderedContext, `${systemPrompt || ''}`.trim()]
+            .filter(Boolean)
+            .join('\n\n');
         const systemBlocks = buildSystemBlocks(staticSystemText, dynamicSystemText);
 
         const messages = [];

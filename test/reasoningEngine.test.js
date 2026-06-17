@@ -7,22 +7,30 @@ test('requiresDeepReasoning: returns true for proactive mode', () => {
     assert.equal(requiresDeepReasoning('hello', contextPack), true);
 });
 
-test('requiresDeepReasoning: returns true for ambiguous references', () => {
+test('requiresDeepReasoning: casual ambiguous references stay on the fast path', () => {
+    // Words like "tadi/itu/dia" are extremely common in casual Indonesian chat.
+    // Sending all of them through 2-pass reasoning made Bubu slow and costly.
     const ambiguous = ['yang kemarin', 'tadi', 'itu', 'dia', 'maksudnya', 'soal yang', 'waktu itu'];
     for (const ref of ambiguous) {
-        assert.equal(requiresDeepReasoning(`gimana ${ref}?`, {}), true, `Failed on: ${ref}`);
+        assert.equal(requiresDeepReasoning(`gimana ${ref}?`, {}), false, `Should be fast: ${ref}`);
     }
 });
 
-test('requiresDeepReasoning: returns true for @all mentions', () => {
-    assert.equal(requiresDeepReasoning('halo @all', {}), true);
-    assert.equal(requiresDeepReasoning('halo @semua', {}), true);
-    assert.equal(requiresDeepReasoning('tanya dong @all bisa gak', {}), true);
+test('requiresDeepReasoning: @all mentions stay on the fast path (handled downstream)', () => {
+    // The mention pipeline (cooldown + guard) governs blast radius, not reasoning depth.
+    assert.equal(requiresDeepReasoning('halo @all', {}), false);
+    assert.equal(requiresDeepReasoning('halo @semua', {}), false);
+    assert.equal(requiresDeepReasoning('tanya dong @all bisa gak', {}), false);
 });
 
-test('requiresDeepReasoning: returns true for long messages (>200 chars)', () => {
-    const longMsg = 'x'.repeat(201);
-    assert.equal(requiresDeepReasoning(longMsg, {}), true);
+test('requiresDeepReasoning: moderately long messages stay on the fast path', () => {
+    const moderate = 'x'.repeat(201);
+    assert.equal(requiresDeepReasoning(moderate, {}), false);
+});
+
+test('requiresDeepReasoning: only very long multi-part messages go deep', () => {
+    const veryLong = 'x'.repeat(601);
+    assert.equal(requiresDeepReasoning(veryLong, {}), true);
 });
 
 test('requiresDeepReasoning: returns false for simple short messages', () => {
@@ -63,6 +71,42 @@ test('adaptiveAskAI fast path accepts plain text and does not inject mood contex
     const allSystemText = calls[0].system.map(block => block.text).join('\n');
     assert.doesNotMatch(allSystemText, /Mood Bubu sekarang|mood.*berubah/i);
     assert.doesNotMatch(allSystemText, /<reasoning>|<response>/i);
+});
+
+test('adaptiveAskAI injects rendered context pack into the dynamic system block', async () => {
+    const { buildContextPack } = require('../modules/contextPack');
+    const calls = [];
+    const anthropic = {
+        messages: {
+            create: async (payload) => {
+                calls.push(payload);
+                return { content: [{ type: 'text', text: 'ok' }], usage: {} };
+            },
+        },
+    };
+
+    const pack = buildContextPack({
+        chatId: '628123@c.us',
+        senderJid: '628123@c.us',
+        senderName: 'Andre',
+        payload: {},
+        messageText: 'halo',
+    });
+
+    await adaptiveAskAI({
+        anthropic,
+        userMessage: 'halo',
+        systemPrompt: '',
+        contextPack: pack,
+        getHistoryFn: () => [],
+        useContext: false,
+        senderName: 'Andre',
+    });
+
+    const systemText = calls[0].system.map(block => block.text).join('\n');
+    assert.match(systemText, /Runtime context, do not announce:/);
+    assert.match(systemText, /chat\.type=dm/);
+    assert.match(systemText, /sender\.name=Andre/);
 });
 
 test('adaptiveAskAI includes provided dynamic system prompt without mood', async () => {

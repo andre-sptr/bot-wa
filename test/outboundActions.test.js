@@ -89,6 +89,34 @@ test('executeOutboundRequests sends group target and origin confirmation', async
     ]);
 });
 
+test('executeOutboundRequests does not confirm success when target send fails', async () => {
+    const sent = [];
+    const directory = {
+        resolveChat: (target) => target === 'Andre'
+            ? { id: '6282387025429@c.us', type: 'dm', name: 'Andre', ambiguous: false }
+            : null,
+    };
+    const result = await executeOutboundRequests({
+        actions: [{ type: 'send_dm', targetText: 'Andre', message: 'ping' }],
+        directory,
+        sendWA: async (text, chatId) => {
+            sent.push({ text, chatId });
+            if (chatId === '6282387025429@c.us') return { ok: false, error: { message: 'not on whatsapp' } };
+            return { ok: true };
+        },
+        originChatId: '120@g.us',
+    });
+
+    assert.equal(result.sent.length, 0, 'failed send must not be counted as sent');
+    assert.equal(result.failed.length, 1, 'failed send must be recorded');
+    assert.equal(sent[0].chatId, '6282387025429@c.us', 'target send should be attempted');
+
+    const originMsg = sent.find(item => item.chatId === '120@g.us');
+    assert.ok(originMsg, 'origin must be notified of the failure');
+    assert.doesNotMatch(originMsg.text, /udah chat|udah kirim/i, 'must not claim success');
+    assert.match(originMsg.text, /gagal/i, 'must honestly report failure');
+});
+
 test('executeOutboundRequests reports unresolved and ambiguous targets without sending target message', async () => {
     const sent = [];
     const directory = {

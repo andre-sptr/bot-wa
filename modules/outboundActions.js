@@ -57,6 +57,12 @@ const blockedMessageFor = (action, resolved) => {
     return `${action.targetText} ketemunya bukan kontak pribadi.`;
 };
 
+const failureMessageFor = (action, resolved) => {
+    const name = cleanText(resolved?.name) || action.targetText;
+    if (action.type === 'send_group') return `Bubu gagal kirim ke grup ${name}, coba lagi ya.`;
+    return `Bubu gagal kirim ke ${name}, coba lagi ya.`;
+};
+
 const isCompatibleTarget = (action, resolved) => {
     if (!resolved || resolved.ambiguous) return false;
     if (action.type === 'send_group') return resolved.type === 'group';
@@ -70,7 +76,7 @@ const executeOutboundRequests = async ({
     sendWA,
     originChatId,
 } = {}) => {
-    const result = { sent: [], blocked: [] };
+    const result = { sent: [], blocked: [], failed: [] };
     if (!Array.isArray(actions) || actions.length === 0) return result;
 
     for (const action of actions) {
@@ -85,9 +91,20 @@ const executeOutboundRequests = async ({
             continue;
         }
 
-        await sendWA(action.message, resolved.id, []);
-        result.sent.push({ action, target: resolved });
+        // Only confirm success if the underlying send actually succeeded.
+        // sendWA returns { ok, error }; treat a missing return as success for backward compatibility.
+        const sendResult = await sendWA(action.message, resolved.id, []);
+        const sent = !sendResult || sendResult.ok !== false;
 
+        if (!sent) {
+            result.failed.push({ action, target: resolved, error: sendResult.error || null });
+            if (originChatId) {
+                await sendWA(failureMessageFor(action, resolved), originChatId, []);
+            }
+            continue;
+        }
+
+        result.sent.push({ action, target: resolved });
         if (originChatId) {
             await sendWA(confirmationFor(action, resolved), originChatId, []);
         }

@@ -23,6 +23,13 @@ test('persona no longer requires mood or reasoning tags', () => {
     assert.doesNotMatch(p, /\bMOOD\b|mood.*berubah|Mood Bubu/i);
 });
 
+test('persona forbids fabricating send/DM success', () => {
+    const p = buildBubuPersona({ botPhone: '628111604384' });
+
+    assert.match(p, /jangan.*mengaku sudah (mengirim|kirim)/i);
+    assert.match(p, /jujur/i);
+});
+
 test('persona does not leak botPhone into static prompt', () => {
     const p = buildBubuPersona({ botPhone: '628111604384' });
     assert.doesNotMatch(p, /628111604384/);

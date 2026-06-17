@@ -222,6 +222,7 @@ const createWebhookProcessor = ({
             record(`${source}-outbound-actions-completed`, {
                 sent: outboundResult.sent.length,
                 blocked: outboundResult.blocked.length,
+                failed: outboundResult.failed.length,
             });
             return;
         }
