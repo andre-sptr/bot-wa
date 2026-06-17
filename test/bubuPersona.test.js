@@ -30,6 +30,15 @@ test('persona forbids fabricating send/DM success', () => {
     assert.match(p, /jujur/i);
 });
 
+test('persona teaches the dm tag mechanism using runtime context ids', () => {
+    const p = buildBubuPersona({ botPhone: '628111604384' });
+
+    // To actually send, the model must emit a <dm target="..."> tag.
+    assert.match(p, /<dm target="/i);
+    // Targets come from the runtime context (sender id / group members), known contacts only.
+    assert.match(p, /context/i);
+});
+
 test('persona does not leak botPhone into static prompt', () => {
     const p = buildBubuPersona({ botPhone: '628111604384' });
     assert.doesNotMatch(p, /628111604384/);

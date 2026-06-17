@@ -89,6 +89,29 @@ test('executeOutboundRequests sends group target and origin confirmation', async
     ]);
 });
 
+test('executeOutboundRequests resolves a @lid target to @c.us before sending', async () => {
+    const sent = [];
+    const directory = {
+        resolveChat: (target) => target === 'Della'
+            ? { id: '133010842214648@lid', type: 'dm', name: 'Della', ambiguous: false }
+            : null,
+    };
+    const result = await executeOutboundRequests({
+        actions: [{ type: 'send_dm', targetText: 'Della', message: 'halo' }],
+        directory,
+        sendWA: async (text, chatId) => {
+            sent.push({ text, chatId });
+            return { ok: true };
+        },
+        originChatId: '120@g.us',
+        resolveLid: async (lid) => lid === '133010842214648@lid' ? '628555@c.us' : lid,
+    });
+
+    assert.equal(result.sent.length, 1);
+    assert.equal(sent[0].chatId, '628555@c.us', 'must send to the resolved @c.us, not the @lid');
+    assert.equal(sent[0].text, 'halo');
+});
+
 test('executeOutboundRequests does not confirm success when target send fails', async () => {
     const sent = [];
     const directory = {

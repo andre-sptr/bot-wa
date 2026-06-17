@@ -32,6 +32,7 @@ const {
     createOpenAICompatibleAnthropicAdapter,
 } = require('./modules/llmFallback');
 const { adaptiveAskAI } = require('./modules/reasoningEngine');
+const { stripDMTags } = require('./modules/reasoning');
 const lifecycle = require('./modules/lifecycle');
 
 const app = express();
@@ -134,7 +135,9 @@ const makeAskAI = (chatId, senderName, senderJid = null) => async (systemPrompt,
         const formattedReply = formatForWhatsApp(aiReply);
 
         if (useContext && chatId && formattedReply) {
-            addMessage(chatId, userMessage, formattedReply, senderName, senderJid);
+            // Store the user-facing text only; <dm> control tags must not leak into history,
+            // or the model sees its own tags next turn and may re-send or get confused.
+            addMessage(chatId, userMessage, stripDMTags(formattedReply), senderName, senderJid);
         }
         return formattedReply;
     } catch (error) {

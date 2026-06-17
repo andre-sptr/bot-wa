@@ -70,11 +70,22 @@ const isCompatibleTarget = (action, resolved) => {
     return false;
 };
 
+const resolveCanonicalId = async (id, resolveLid) => {
+    const targetId = String(id || '');
+    if (!targetId.endsWith('@lid') || typeof resolveLid !== 'function') return targetId;
+    try {
+        const canonical = await resolveLid(targetId);
+        if (canonical && String(canonical).endsWith('@c.us')) return String(canonical);
+    } catch { /* keep @lid; sendWA failure is reported honestly */ }
+    return targetId;
+};
+
 const executeOutboundRequests = async ({
     actions = [],
     directory,
     sendWA,
     originChatId,
+    resolveLid,
 } = {}) => {
     const result = { sent: [], blocked: [], failed: [] };
     if (!Array.isArray(actions) || actions.length === 0) return result;
@@ -91,9 +102,12 @@ const executeOutboundRequests = async ({
             continue;
         }
 
+        // WAHA sends to <number>@c.us; resolve @lid targets first so the message actually lands.
+        const targetId = await resolveCanonicalId(resolved.id, resolveLid);
+
         // Only confirm success if the underlying send actually succeeded.
         // sendWA returns { ok, error }; treat a missing return as success for backward compatibility.
-        const sendResult = await sendWA(action.message, resolved.id, []);
+        const sendResult = await sendWA(action.message, targetId, []);
         const sent = !sendResult || sendResult.ok !== false;
 
         if (!sent) {

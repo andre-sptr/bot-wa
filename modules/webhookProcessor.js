@@ -55,7 +55,7 @@ const createWebhookProcessor = ({
     summarizeBotState,
     botTriggerState,
     groupRosterClient,
-    lidResolver, // eslint-disable-line no-unused-vars -- kept in factory contract per Tier-2E plan
+    lidResolver,
     chatDirectory,
     mentionCooldownStore,
     TARGET_GROUPS,
@@ -218,6 +218,7 @@ const createWebhookProcessor = ({
                 directory: chatDirectory,
                 sendWA,
                 originChatId: chatId,
+                resolveLid: lidResolver ? (jid) => lidResolver.canonicalId(jid) : undefined,
             });
             record(`${source}-outbound-actions-completed`, {
                 sent: outboundResult.sent.length,
