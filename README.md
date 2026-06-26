@@ -1,4 +1,4 @@
-# bot-wa
+# whatsapp-ai-assistant
 
 WhatsApp automation assistant built with Node.js, Express, WAHA integration, scheduled jobs, and AI-assisted responses.
 
@@ -8,7 +8,7 @@ WhatsApp automation assistant built with Node.js, Express, WAHA integration, sch
 - AI response workflow using Anthropic/Sumopod-compatible configuration.
 - Chat context handling.
 - Scheduled jobs with `node-cron`.
-- Policy, live, and quality evaluation test scripts.
+- Policy and quality evaluation test scripts.
 
 ## Tech Stack
 
@@ -26,7 +26,7 @@ npm install
 npm start
 ```
 
-Run the available checks:
+Run available checks:
 
 ```bash
 npm run test:all
